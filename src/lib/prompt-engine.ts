@@ -4,6 +4,33 @@ import { getCharacterDescription } from "./character-profile";
 
 const GOOGLE_AI_STUDIO_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 
+// ─── Image Helper ────────────────────────────────────────────────
+
+interface GeminiInlinePart {
+  inlineData: { mimeType: string; data: string };
+}
+
+async function downloadImageAsInlinePart(url: string): Promise<GeminiInlinePart | null> {
+  try {
+    if (url.startsWith("data:")) {
+      const match = url.match(/^data:([^;]+);base64,(.+)$/);
+      if (match) return { inlineData: { mimeType: match[1], data: match[2] } };
+      return null;
+    }
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const buffer = await res.arrayBuffer();
+    return {
+      inlineData: {
+        mimeType: res.headers.get("content-type") || "image/png",
+        data: Buffer.from(buffer).toString("base64"),
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * The prompt engine takes a simple user request and expands it into a
  * production-grade video generation prompt using Gemini.
@@ -117,9 +144,16 @@ A high-converting TikTok UGC video of a young woman in a white bathrobe with a t
 
 --- END REFERENCES ---
 
+═══ CHARACTER REFERENCE IMAGES ═══
+If character sheet images are attached to this message, study them carefully — they are your PRIMARY visual reference:
+- POSES SHEET (3x3 grid): Shows the person in 9 different poses and settings. Use these to describe their exact build, posture habits, clothing style, facial expressions, and energy.
+- 360° SHEET (3x3 grid): Shows the person from every angle — front, sides, back, top. Use these to describe what they look like from any camera angle the prompt requires.
+- Write THE CHARACTER section to match EXACTLY what you see — skin tone, hair texture, facial structure, body proportions, distinctive features, typical clothing.
+- If no images are attached, rely on the text character description provided in the CHARACTER CONTEXT section.
+
 YOUR JOB: Take the user's simple request and write a prompt at THAT level of detail and specificity. Match the ENERGY, SPECIFICITY, and PERSONALITY of those references. Adapt the style to the user's industry and request.
 
-For the CHARACTER section: use the provided character details (name, industry, brand) but describe them like a casting director would — give them a VIBE, not a resume. "Talks like she's catching up with a neighbor" not "Maintains professional eye contact."
+For the CHARACTER section: use the provided character details (name, industry, brand) AND the attached reference images to describe them like a casting director would — give them a VIBE, not a resume. "Talks like she's catching up with a neighbor" not "Maintains professional eye contact." Match their ACTUAL appearance from the reference images.
 
 OUTPUT FORMAT:
 Return a JSON object with these fields:
@@ -130,13 +164,16 @@ Return a JSON object with these fields:
 
 // ─── Character Context Builder ──────────────────────────────────
 
-async function getCharacterContext(userId: string): Promise<string> {
-  // Get user's character sheet details
+interface CharacterContextResult {
+  text: string;
+  imageParts: GeminiInlinePart[];
+}
+
+async function getCharacterContext(userId: string): Promise<CharacterContextResult> {
+  // Get ALL completed character sheets (poses + 3d_360)
   const sheets = await prisma.characterSheet.findMany({
     where: { userId, status: "complete" },
-    include: { images: true },
     orderBy: { createdAt: "desc" },
-    take: 1,
   });
 
   // Get user's brand profile
@@ -151,6 +188,7 @@ async function getCharacterContext(userId: string): Promise<string> {
   });
 
   let context = "";
+  const imageParts: GeminiInlinePart[] = [];
 
   // Get the detailed character description (extracted from photos)
   const characterDesc = await getCharacterDescription(userId);
@@ -170,11 +208,33 @@ async function getCharacterContext(userId: string): Promise<string> {
     if (brand.targetAudience) context += `\nTARGET AUDIENCE: ${brand.targetAudience}`;
   }
 
-  if (sheets.length > 0) {
-    context += `\nCHARACTER SHEET: Available (${sheets[0].type} — ${sheets[0].images.length} reference images)`;
+  // Download character sheet images for Gemini visual reference
+  const posesSheet = sheets.find(s => s.type === "poses" && s.compositeUrl);
+  const threeDSheet = sheets.find(s => s.type === "3d_360" && s.compositeUrl);
+
+  if (posesSheet?.compositeUrl) {
+    const part = await downloadImageAsInlinePart(posesSheet.compositeUrl);
+    if (part) {
+      imageParts.push(part);
+      context += `\nCHARACTER SHEET (POSES): Attached as image — 3x3 grid showing this person in 9 different poses and backgrounds. Use this to accurately describe their appearance, clothing style, posture, and energy in every cut.`;
+    }
   }
 
-  return context;
+  if (threeDSheet?.compositeUrl) {
+    const part = await downloadImageAsInlinePart(threeDSheet.compositeUrl);
+    if (part) {
+      imageParts.push(part);
+      context += `\nCHARACTER SHEET (360°): Attached as image — 3x3 grid showing this person from every angle (front, sides, back, top). Use this to accurately describe how they look from any camera angle.`;
+    }
+  }
+
+  if (imageParts.length === 0 && sheets.length > 0) {
+    context += `\nCHARACTER SHEET: Available but images could not be loaded — rely on the text description above.`;
+  }
+
+  console.log(`[prompt-engine] Character context: ${imageParts.length} reference image(s) attached for user ${userId}`);
+
+  return { text: context, imageParts };
 }
 
 // ─── Model-Specific Instructions ────────────────────────────────
@@ -226,7 +286,7 @@ export async function expandPrompt(input: PromptEngineInput): Promise<PromptEngi
     };
   }
 
-  const characterContext = await getCharacterContext(input.userId);
+  const { text: characterContext, imageParts } = await getCharacterContext(input.userId);
   const modelInstructions = getModelInstructions(input.model);
   const format = input.format || "9:16";
   const duration = input.duration || 8;
@@ -248,6 +308,12 @@ ${customSystemAdditions ? `ADDITIONAL INSTRUCTIONS FROM ADMIN:\n${customSystemAd
 Generate the full production prompt now. Return valid JSON only.`;
 
   try {
+    // Build multimodal parts: text prompt + character sheet images (if available)
+    const parts: Array<{ text: string } | GeminiInlinePart> = [
+      { text: SYSTEM_PROMPT + "\n\n" + userMessage },
+      ...imageParts,
+    ];
+
     const response = await fetch(
       `${GOOGLE_AI_STUDIO_URL}/gemini-2.5-flash:generateContent?key=${apiKey}`,
       {
@@ -255,7 +321,7 @@ Generate the full production prompt now. Return valid JSON only.`;
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           contents: [
-            { role: "user", parts: [{ text: SYSTEM_PROMPT + "\n\n" + userMessage }] },
+            { role: "user", parts },
           ],
           generationConfig: {
             temperature: 0.7,

@@ -203,6 +203,8 @@ export async function POST(req: NextRequest) {
       const { falPollOnce } = await import("@/lib/generate");
       const pollResult = await falPollOnce(cutJob.jobId);
 
+      console.log(`[process/poll] Cut ${i} — FAL status: ${pollResult.status}, hasVideoUrl: ${!!pollResult.videoUrl}`);
+
       cutJob.status = pollResult.status;
       if (pollResult.videoUrl) cutJob.videoUrl = pollResult.videoUrl;
       meta.cutJobs[i] = cutJob;
@@ -214,6 +216,7 @@ export async function POST(req: NextRequest) {
       if (pollResult.status === "completed") {
         const cuts = meta.cuts || [];
         const isLastCut = i >= cuts.length - 1;
+        console.log(`[process/poll] Cut ${i} COMPLETED — videoUrl: ${pollResult.videoUrl?.substring(0, 80)}...`);
         return NextResponse.json({
           status: "cut_done",
           cutIndex: i,
@@ -223,6 +226,16 @@ export async function POST(req: NextRequest) {
         });
       }
 
+      if (pollResult.status === "failed") {
+        console.error(`[process/poll] Cut ${i} FAILED: ${pollResult.error}`);
+        return NextResponse.json({
+          status: "cut_failed",
+          cutIndex: i,
+          error: pollResult.error || "Video generation failed",
+        });
+      }
+
+      console.log(`[process/poll] Cut ${i} still processing — returning "polling"`);
       return NextResponse.json({
         status: "polling",
         cutIndex: i,
@@ -237,9 +250,13 @@ export async function POST(req: NextRequest) {
       const meta = video.sourceReview ? JSON.parse(video.sourceReview as string) : {};
       const cutJobs = meta.cutJobs || {};
 
+      console.log(`[process/stitch] cutJobs:`, JSON.stringify(cutJobs, null, 2));
+
       const completedCuts: StitchCut[] = Object.values(cutJobs)
         .filter((j: any) => j.videoUrl)
         .map((j: any) => ({ videoUrl: j.videoUrl, trimTo: j.trimTo }));
+
+      console.log(`[process/stitch] ${completedCuts.length} cuts with videoUrls out of ${Object.keys(cutJobs).length} total`);
 
       if (completedCuts.length === 0) {
         return NextResponse.json({ error: "No completed cuts to stitch" }, { status: 400 });

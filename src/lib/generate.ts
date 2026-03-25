@@ -88,9 +88,9 @@ const FAL_MODELS: Record<string, FalModelConfig> = {
     supportsImage: true,
     supportsAudio: false,
     buildPayload: (p) => ({
-      prompt: p.script,
+      prompt: (p.script || "").substring(0, 2500),
       image_url: p.photoUrl,
-      duration: String(Math.min(p.duration || 5, 10)),
+      duration: (p.duration || 5) >= 8 ? "10" : "5",
       aspect_ratio: "9:16",
     }),
   },
@@ -173,9 +173,9 @@ const FAL_MODELS: Record<string, FalModelConfig> = {
     supportsImage: true,
     supportsAudio: false,
     buildPayload: (p) => ({
-      prompt: p.script,
+      prompt: (p.script || "").substring(0, 2500),
       image_url: p.photoUrl,
-      duration: String(Math.min(p.duration || 5, 10)),
+      duration: (p.duration || 5) >= 8 ? "10" : "5",
       aspect_ratio: "9:16",
     }),
   },
@@ -300,22 +300,43 @@ async function falPoll(compositeJobId: string): Promise<PollResult> {
     }
 
     const statusData = await statusRes.json();
+    console.log(`[FAL] Status response:`, JSON.stringify(statusData).substring(0, 300));
 
     if (statusData.status === "COMPLETED") {
-      // Fetch the actual result using the exact URL FAL gave us
+      // Check if the status response itself contains the actual video URL
+      // (NOT response_url — that's just the FAL API endpoint)
+      const embeddedUrl = statusData.video?.url || statusData.output?.url;
+      if (embeddedUrl) {
+        console.log(`[FAL] Video URL found in status response: ${embeddedUrl.substring(0, 80)}...`);
+        return { status: "completed", videoUrl: embeddedUrl };
+      }
+
+      // Fetch the actual result using the response URL FAL gave us
       const resultRes = await fetch(responseUrl, {
         headers: { Authorization: `Key ${apiKey}` },
       });
 
       if (!resultRes.ok) {
-        return { status: "completed" };
+        const errBody = await resultRes.text().catch(() => "");
+        console.error(`[FAL] Response fetch failed (${resultRes.status}): ${errBody.substring(0, 300)}`);
+        // 422 = validation error (prompt too long, bad duration, etc.) — will never succeed
+        if (resultRes.status === 422) {
+          return { status: "failed", error: `FAL validation error: ${errBody.substring(0, 200)}` };
+        }
+        return { status: "processing" };
       }
 
       const result = await resultRes.json();
       const videoUrl = result.video?.url || result.output?.url || result.data?.video_url;
       const thumbnailUrl = result.images?.[0]?.url || result.thumbnail?.url || null;
 
-      console.log(`[FAL] Video completed: ${videoUrl ? "has URL" : "no URL"}`);
+      if (!videoUrl) {
+        console.error(`[FAL] Status=COMPLETED but no video URL in response. Keys: ${Object.keys(result).join(", ")}. Treating as still processing.`);
+        console.error(`[FAL] Response body sample:`, JSON.stringify(result).substring(0, 500));
+        return { status: "processing" };
+      }
+
+      console.log(`[FAL] Video completed: ${videoUrl.substring(0, 80)}...`);
       return { status: "completed", videoUrl, thumbnailUrl };
     }
 

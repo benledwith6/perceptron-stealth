@@ -177,6 +177,20 @@ function OnboardingFlow() {
     if (!videoUrl && !videoGenerating) generateFirstVideo();
   };
 
+  // Helper to call /api/generate/process for a single step
+  const processStep = async (videoId: string, step: string, cutIndex?: number) => {
+    const body: Record<string, unknown> = { videoId, step };
+    if (cutIndex !== undefined) body.cutIndex = cutIndex;
+    const res = await fetch("/api/generate/process", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    // Return data even on non-200 so caller can inspect status
+    return { ...data, _httpStatus: res.status };
+  };
+
   const generateFirstVideo = async () => {
     setVideoGenerating(true);
     setVideoError(null);
@@ -195,9 +209,7 @@ function OnboardingFlow() {
       if (!res.ok) throw new Error("Failed to create video record");
       const vid = await res.json();
 
-      // Step 2: Kick off generation with format and script.
-      // Uses quick_tip_8 format (8 seconds, 3 cuts) for fast onboarding experience.
-      // The generate API will use the starting frame for character consistency.
+      // Step 2: Create composition plan
       const gen = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -208,21 +220,74 @@ function OnboardingFlow() {
           script: "A confident professional introducing themselves and sharing a quick tip relevant to their industry. Natural, conversational, like talking to a friend.",
         }),
       });
-
       if (!gen.ok) throw new Error("Failed to start generation");
       const genData = await gen.json();
 
-      // Step 3: Check if the hook came back immediately (demo mode / sync result)
+      // Check if video came back immediately (demo mode)
       if (genData.video?.videoUrl) {
         setVideoUrl(genData.video.videoUrl);
         setVideoGenerating(false);
         return;
       }
 
-      // Step 4: Poll for completion — the hook generates first, then remaining
-      // cuts are stitched in background. We show the video as soon as any URL is available.
       const videoId = genData.video?.id || vid.id;
-      startPolling(videoId);
+
+      // Step 3: EXPAND — Gemini expands script into per-cut prompts
+      const expandResult = await processStep(videoId, "expand");
+      if (expandResult._httpStatus !== 200) throw new Error("Prompt expansion failed");
+
+      // Step 4: TTS — Generate voiceover audio
+      await processStep(videoId, "tts");
+
+      // Step 5: Submit ALL cuts to FAL first, then poll all until done
+      const totalCuts = expandResult.totalCuts || 3;
+
+      // 5a: Submit all cuts
+      for (let i = 0; i < totalCuts; i++) {
+        const cutResult = await processStep(videoId, "cut", i);
+        console.log(`[onboarding] Cut ${i} submitted:`, cutResult.status);
+      }
+
+      // 5b: Poll ALL cuts until every one is done or failed
+      const cutsDone = new Set<number>();
+      const cutsFailed = new Set<number>();
+      let totalPollAttempts = 0;
+      const maxTotalPolls = 180; // 180 * 5s = 15 min max total
+
+      while (cutsDone.size + cutsFailed.size < totalCuts && totalPollAttempts < maxTotalPolls) {
+        await new Promise(r => setTimeout(r, 5000)); // wait 5s
+        totalPollAttempts++;
+
+        for (let i = 0; i < totalCuts; i++) {
+          if (cutsDone.has(i) || cutsFailed.has(i)) continue;
+          try {
+            const pollResult = await processStep(videoId, "poll", i);
+            if (pollResult.status === "cut_done") {
+              cutsDone.add(i);
+            } else if (pollResult.status === "cut_failed") {
+              cutsFailed.add(i);
+            }
+          } catch {
+            // Network error — keep trying next poll cycle
+          }
+        }
+      }
+
+      if (cutsDone.size === 0) {
+        throw new Error("No video cuts completed. Please try again from the dashboard.");
+      }
+
+      // Step 6: STITCH — Combine all cuts + audio into final video
+      const stitchResult = await processStep(videoId, "stitch");
+
+      if (stitchResult._httpStatus !== 200) {
+        throw new Error(stitchResult.error || "Video stitching failed");
+      }
+
+      if (stitchResult.videoUrl) {
+        setVideoUrl(stitchResult.videoUrl);
+      }
+      setVideoGenerating(false);
     } catch (err: any) {
       setVideoError(err.message || "Video generation failed");
       setVideoGenerating(false);

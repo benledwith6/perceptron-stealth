@@ -108,10 +108,10 @@ function buildTimeline(options: StitchOptions) {
     });
   }
 
-  // Resolution mapping
+  // Shotstack expects: "preview", "mobile", "sd", "hd", "1080", "4k"
   const resolutionMap: Record<string, string> = {
-    sd: "480",
-    hd: "720",
+    sd: "sd",
+    hd: "hd",
     "1080": "1080",
   };
 
@@ -122,7 +122,7 @@ function buildTimeline(options: StitchOptions) {
     },
     output: {
       format: options.outputFormat || "mp4",
-      resolution: resolutionMap[options.resolution || "hd"] || "720",
+      resolution: resolutionMap[options.resolution || "hd"] || "hd",
       aspectRatio: aspectRatio,
       // Optimize for social media
       fps: 30,
