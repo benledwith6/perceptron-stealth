@@ -36,6 +36,7 @@ type ShotstackStatus =
   | "rendering"
   | "finalizing"
   | "completed"
+  | "done"
   | "failed";
 
 export interface StitchJob {
@@ -294,8 +295,8 @@ export async function waitForStitch(
   while (Date.now() - start < maxWaitMs) {
     const status = await getStitchStatus(jobId);
 
-    // Shotstack returns "completed" (not "done") when the render is finished
-    if (status.status === "completed") {
+    // Shotstack returns "done" or "completed" when the render is finished
+    if (status.status === "completed" || status.status === "done") {
       log(`Job ${jobId} completed in ${((Date.now() - start) / 1000).toFixed(1)}s`);
       return status;
     }
