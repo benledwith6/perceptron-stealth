@@ -15,6 +15,7 @@ const posts = [
     readTime: "6 min read",
     date: "March 18, 2026",
     featured: true,
+    comingSoon: false,
   },
   {
     slug: "ai-ugc-future",
@@ -25,6 +26,7 @@ const posts = [
     readTime: "5 min read",
     date: "March 12, 2026",
     featured: false,
+    comingSoon: true,
   },
   {
     slug: "real-estate-agents-ai",
@@ -35,6 +37,7 @@ const posts = [
     readTime: "7 min read",
     date: "March 6, 2026",
     featured: false,
+    comingSoon: true,
   },
   {
     slug: "five-content-formats",
@@ -45,6 +48,7 @@ const posts = [
     readTime: "4 min read",
     date: "February 28, 2026",
     featured: false,
+    comingSoon: true,
   },
 ];
 
@@ -130,38 +134,45 @@ export default function BlogClient() {
       <section className="pb-24 px-6">
         <div className="max-w-4xl mx-auto">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-            {rest.map((post) => (
-              <Link
-                key={post.slug}
-                href={`/blog/${post.slug}`}
-                className="group p-6 rounded-2xl border border-white/[0.04] bg-white/[0.015] hover:border-white/[0.08] hover:bg-white/[0.025] transition-all duration-300"
-              >
-                <div className="flex items-center gap-2 mb-4">
-                  <span
-                    className={`text-[10px] font-medium px-2 py-0.5 rounded-full border ${
-                      categoryColors[post.category] || "text-white/40 bg-white/[0.04] border-white/[0.06]"
-                    }`}
-                  >
-                    {post.category}
-                  </span>
-                </div>
+            {rest.map((post) => {
+              const Wrapper = post.comingSoon ? "div" : Link;
+              const wrapperProps = post.comingSoon
+                ? { className: "group p-6 rounded-2xl border border-white/[0.04] bg-white/[0.015] opacity-60 cursor-default" }
+                : { href: `/blog/${post.slug}`, className: "group p-6 rounded-2xl border border-white/[0.04] bg-white/[0.015] hover:border-white/[0.08] hover:bg-white/[0.025] transition-all duration-300" };
+              return (
+                <Wrapper key={post.slug} {...(wrapperProps as any)}>
+                  <div className="flex items-center gap-2 mb-4">
+                    <span
+                      className={`text-[10px] font-medium px-2 py-0.5 rounded-full border ${
+                        categoryColors[post.category] || "text-white/40 bg-white/[0.04] border-white/[0.06]"
+                      }`}
+                    >
+                      {post.category}
+                    </span>
+                    {post.comingSoon && (
+                      <span className="text-[10px] font-medium px-2 py-0.5 rounded-full border text-white/30 bg-white/[0.04] border-white/[0.06]">
+                        Coming Soon
+                      </span>
+                    )}
+                  </div>
 
-                <h3 className="text-[15px] font-semibold text-white/80 mb-2 leading-snug group-hover:text-white transition-colors">
-                  {post.title}
-                </h3>
-                <p className="text-[12px] text-white/25 leading-relaxed mb-4">
-                  {post.excerpt}
-                </p>
+                  <h3 className="text-[15px] font-semibold text-white/80 mb-2 leading-snug group-hover:text-white transition-colors">
+                    {post.title}
+                  </h3>
+                  <p className="text-[12px] text-white/25 leading-relaxed mb-4">
+                    {post.excerpt}
+                  </p>
 
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] text-white/15">{post.date}</span>
-                  <span className="inline-flex items-center gap-1 text-[11px] text-white/15">
-                    <Clock className="w-2.5 h-2.5" />
-                    {post.readTime}
-                  </span>
-                </div>
-              </Link>
-            ))}
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] text-white/15">{post.date}</span>
+                    <span className="inline-flex items-center gap-1 text-[11px] text-white/15">
+                      <Clock className="w-2.5 h-2.5" />
+                      {post.readTime}
+                    </span>
+                  </div>
+                </Wrapper>
+              );
+            })}
           </div>
         </div>
       </section>

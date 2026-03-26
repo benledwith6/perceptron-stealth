@@ -3,14 +3,13 @@
 import { useState, Suspense } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Sparkles, Lock, Mail, ArrowRight, ArrowLeft, CheckCircle2, AlertCircle } from "lucide-react";
+import { Sparkles, Lock, ArrowRight, ArrowLeft, CheckCircle2, AlertCircle } from "lucide-react";
 
 function ResetPasswordForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const emailParam = searchParams.get("email") || "";
+  const token = searchParams.get("token");
 
-  const [email, setEmail] = useState(emailParam);
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState("");
@@ -20,11 +19,6 @@ function ResetPasswordForm() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-
-    if (!email.trim()) {
-      setError("Email is required");
-      return;
-    }
 
     if (password.length < 8) {
       setError("Password must be at least 8 characters");
@@ -42,7 +36,7 @@ function ResetPasswordForm() {
       const res = await fetch("/api/auth/reset-password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: email.trim(), password }),
+        body: JSON.stringify({ token, password }),
       });
 
       const data = await res.json();
@@ -60,6 +54,27 @@ function ResetPasswordForm() {
       setLoading(false);
     }
   };
+
+  if (!token) {
+    return (
+      <div className="glass-card p-8 text-center">
+        <div className="w-12 h-12 rounded-full bg-red-500/10 border border-red-500/20 flex items-center justify-center mx-auto mb-4">
+          <AlertCircle className="w-6 h-6 text-red-400" />
+        </div>
+        <h2 className="text-lg font-semibold mb-2">Invalid reset link</h2>
+        <p className="text-sm text-white/40 mb-6">
+          This password reset link is missing or invalid. Please request a new one.
+        </p>
+        <Link
+          href="/auth/forgot-password"
+          className="btn-primary w-full gap-2 inline-flex items-center justify-center"
+        >
+          Request new reset link
+          <ArrowRight className="w-4 h-4" />
+        </Link>
+      </div>
+    );
+  }
 
   if (success) {
     return (
@@ -92,23 +107,6 @@ function ResetPasswordForm() {
       )}
 
       <form onSubmit={handleSubmit} className="space-y-5">
-        <div>
-          <label className="block text-sm font-medium text-white/60 mb-2">
-            Email address
-          </label>
-          <div className="relative">
-            <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30" />
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="you@example.com"
-              className="input-field pl-11"
-              required
-            />
-          </div>
-        </div>
-
         <div>
           <label className="block text-sm font-medium text-white/60 mb-2">
             New password

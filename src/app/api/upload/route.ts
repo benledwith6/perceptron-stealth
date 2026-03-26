@@ -89,7 +89,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         error:
-          "File storage is not configured. Set S3_BUCKET, S3_ACCESS_KEY_ID, and S3_SECRET_ACCESS_KEY.",
+          "File storage is not configured. Set NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY environment variables.",
       },
       { status: 503 }
     );

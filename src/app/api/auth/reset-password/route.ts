@@ -6,15 +6,12 @@ import { authLimiter, RateLimitError } from "@/lib/rate-limit";
 /**
  * POST /api/auth/reset-password
  *
- * Direct password reset without email verification.
- * Accepts { email, password } and updates the user's password.
- *
- * This is a simplified flow for beta/internal use since email
- * functionality has been removed from the platform.
+ * Consumes a password reset token and sets a new password.
+ * The token is validated for existence and expiry, then the password
+ * is updated and the token deleted in a single transaction.
  */
 export async function POST(req: NextRequest) {
   try {
-    // Rate limit by IP to prevent brute-force password changes
     const ip =
       req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
       req.headers.get("x-real-ip") ||
@@ -40,11 +37,11 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { email, password } = body as { email?: string; password?: string };
+    const { token, password } = body as { token?: string; password?: string };
 
-    if (!email || !password) {
+    if (!token || !password) {
       return NextResponse.json(
-        { error: "Email and password are required" },
+        { error: "Token and password are required" },
         { status: 400 }
       );
     }
@@ -56,28 +53,41 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Look up the user by email
-    const user = await prisma.user.findUnique({
-      where: { email: email.toLowerCase().trim() },
+    // Look up the token
+    const resetToken = await prisma.passwordResetToken.findUnique({
+      where: { token },
+      include: { user: true },
     });
 
-    if (!user) {
-      // Return a generic message to avoid leaking whether the email exists
+    if (!resetToken) {
       return NextResponse.json(
-        { error: "If an account exists for that email, the password has been reset." },
-        // Still return 200 to not reveal account existence
-        { status: 200 }
+        { error: "Invalid or expired reset link. Please request a new one." },
+        { status: 400 }
       );
     }
 
-    // Hash the new password
+    // Check expiry
+    if (resetToken.expiresAt < new Date()) {
+      // Clean up expired token
+      await prisma.passwordResetToken.delete({ where: { id: resetToken.id } });
+      return NextResponse.json(
+        { error: "This reset link has expired. Please request a new one." },
+        { status: 400 }
+      );
+    }
+
+    // Hash the new password and update in a transaction
     const passwordHash = await bcrypt.hash(password, 12);
 
-    // Update the user's password
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { passwordHash },
-    });
+    await prisma.$transaction([
+      prisma.user.update({
+        where: { id: resetToken.userId },
+        data: { passwordHash },
+      }),
+      prisma.passwordResetToken.delete({
+        where: { id: resetToken.id },
+      }),
+    ]);
 
     return NextResponse.json({
       message: "Password has been reset successfully.",

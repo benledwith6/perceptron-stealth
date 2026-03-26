@@ -147,8 +147,19 @@ export async function POST(req: NextRequest) {
     // ─── STEP: CUT (generate one video cut) ───────────────────
     if (step === "cut") {
       const i = cutIndex ?? 0;
+
+      // Validate cutIndex bounds
+      if (!Number.isInteger(i) || i < 0) {
+        return NextResponse.json({ error: "cutIndex must be a non-negative integer" }, { status: 400 });
+      }
+
       const meta = video.sourceReview ? JSON.parse(video.sourceReview as string) : {};
       const cuts = meta.cuts || [];
+
+      if (i >= cuts.length) {
+        return NextResponse.json({ error: `cutIndex ${i} is out of bounds (${cuts.length} cuts available)` }, { status: 400 });
+      }
+
       const cut = cuts[i];
 
       if (!cut) {
@@ -162,29 +173,11 @@ export async function POST(req: NextRequest) {
 
       const photoUrl = photo?.url || "";
 
-      // Gather ALL reference images for multi-reference models (Kling O1)
-      // 1. Character sheets (poses + 360°)
-      // 2. Other uploaded photos
+      // Gather reference images for Kling O1 (FAL enforces max 3 reference_image_urls)
+      // Priority: starting frame, poses character sheet, 3D/360 character sheet
       const referenceImageUrls: string[] = [];
 
-      // Get the LATEST character sheets only (one poses + one 360°)
-      const posesSheet = await prisma.characterSheet.findFirst({
-        where: { userId: user.id, status: "complete", type: "poses" },
-        orderBy: { createdAt: "desc" },
-      });
-      const threeDSheet = await prisma.characterSheet.findFirst({
-        where: { userId: user.id, status: "complete", type: "3d_360" },
-        orderBy: { createdAt: "desc" },
-      });
-
-      if (posesSheet?.compositeUrl && !posesSheet.compositeUrl.startsWith("data:")) {
-        referenceImageUrls.push(posesSheet.compositeUrl);
-      }
-      if (threeDSheet?.compositeUrl && !threeDSheet.compositeUrl.startsWith("data:")) {
-        referenceImageUrls.push(threeDSheet.compositeUrl);
-      }
-
-      // Get the LATEST starting frame (generated anchor image for consistency)
+      // 1. Starting frame — the anchor image for character consistency across cuts
       const startingFrame = await prisma.photo.findFirst({
         where: {
           userId: user.id,
@@ -198,26 +191,30 @@ export async function POST(req: NextRequest) {
         referenceImageUrls.push(startingFrame.url);
       }
 
-      // Get other user-uploaded photos (non-primary, max 2, skip starting frames)
-      const otherPhotos = await prisma.photo.findMany({
-        where: {
-          userId: user.id,
-          isPrimary: false,
-          NOT: { filename: { startsWith: "starting-frame" } },
-          url: { not: { startsWith: "/uploads/" } },
-        },
+      // 2. Poses character sheet — multiple poses for the AI to reference
+      const posesSheet = await prisma.characterSheet.findFirst({
+        where: { userId: user.id, status: "complete", type: "poses" },
         orderBy: { createdAt: "desc" },
-        take: 2,
       });
 
-      for (const p of otherPhotos) {
-        if (p.url) referenceImageUrls.push(p.url);
+      if (posesSheet?.compositeUrl && !posesSheet.compositeUrl.startsWith("data:")) {
+        referenceImageUrls.push(posesSheet.compositeUrl);
+      }
+
+      // 3. 3D/360° character sheet — rotation angles for depth understanding
+      const threeDSheet = await prisma.characterSheet.findFirst({
+        where: { userId: user.id, status: "complete", type: "3d_360" },
+        orderBy: { createdAt: "desc" },
+      });
+
+      if (threeDSheet?.compositeUrl && !threeDSheet.compositeUrl.startsWith("data:")) {
+        referenceImageUrls.push(threeDSheet.compositeUrl);
       }
 
       console.log(`[process/cut] Cut ${i} — frontal photo: ${photoUrl.substring(0, 60)}...`);
-      console.log(`[process/cut] Cut ${i} — ${referenceImageUrls.length} reference images: ${referenceImageUrls.map(u => u.substring(0, 50)).join(", ")}`);
+      console.log(`[process/cut] Cut ${i} — ${referenceImageUrls.length} reference images (max 3): ${referenceImageUrls.map(u => u.substring(0, 50)).join(", ")}`);
 
-      // Submit to FAL with all reference images
+      // Submit to FAL with reference images (capped at 3 per FAL limit)
       const result = await generateVideo({
         model: selectedModel,
         photoUrl,
@@ -264,6 +261,12 @@ export async function POST(req: NextRequest) {
     // ─── STEP: POLL (check if cut is done → face swap → done) ─
     if (step === "poll") {
       const i = cutIndex ?? 0;
+
+      // Validate cutIndex bounds
+      if (!Number.isInteger(i) || i < 0) {
+        return NextResponse.json({ error: "cutIndex must be a non-negative integer" }, { status: 400 });
+      }
+
       const meta = video.sourceReview ? JSON.parse(video.sourceReview as string) : {};
       const cutJob = meta.cutJobs?.[i];
 

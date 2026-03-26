@@ -4,6 +4,8 @@ import prisma from "@/lib/prisma";
 import { signupSchema } from "@/lib/validations";
 import { validateBody } from "@/lib/validate";
 import { authLimiter, RateLimitError } from "@/lib/rate-limit";
+import { sendWelcomeEmail, sendEmailVerificationEmail } from "@/lib/email";
+import { v4 as uuidv4 } from "uuid";
 
 export async function POST(req: NextRequest) {
   try {
@@ -53,8 +55,33 @@ export async function POST(req: NextRequest) {
         lastName,
         industry: industry || "other",
         company,
-        emailVerified: true,
+        emailVerified: false,
       },
+    });
+
+    // Generate email verification token (24 hour expiry)
+    const verificationToken = uuidv4();
+    await prisma.emailVerificationToken.create({
+      data: {
+        token: verificationToken,
+        userId: user.id,
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      },
+    });
+
+    // Send emails fire-and-forget to avoid blocking the response
+    sendEmailVerificationEmail(
+      { email: user.email, firstName: user.firstName },
+      verificationToken
+    ).catch((err) => {
+      console.error("[signup] Failed to send verification email:", err);
+    });
+
+    sendWelcomeEmail({
+      email: user.email,
+      firstName: user.firstName,
+    }).catch((err) => {
+      console.error("[signup] Failed to send welcome email:", err);
     });
 
     return NextResponse.json({

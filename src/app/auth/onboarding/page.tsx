@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowRight,
@@ -48,16 +48,8 @@ function OnboardingFlow() {
   const [videoError, setVideoError] = useState<string | null>(null);
   const [completing, setCompleting] = useState(false);
   const [startingFrameGenerated, setStartingFrameGenerated] = useState(false);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const stepIndex = ["industry", "photos", "character", "video"].indexOf(step);
-
-  // Clean up polling on unmount
-  useEffect(() => {
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
-  }, []);
 
   // ─── Industry ──────────────────────────────────────────────────
 
@@ -292,45 +284,6 @@ function OnboardingFlow() {
       setVideoError(err.message || "Video generation failed");
       setVideoGenerating(false);
     }
-  };
-
-  const startPolling = (videoId: string) => {
-    // Clean up any existing poll
-    if (pollRef.current) clearInterval(pollRef.current);
-
-    let pollCount = 0;
-    const maxPolls = 60; // 60 polls * 5s = 5 minutes max
-
-    pollRef.current = setInterval(async () => {
-      pollCount++;
-      if (pollCount > maxPolls) {
-        if (pollRef.current) clearInterval(pollRef.current);
-        setVideoGenerating(false);
-        setVideoError("Video is taking longer than expected. Check your dashboard later.");
-        return;
-      }
-
-      try {
-        const statusRes = await fetch(`/api/generate/status?videoId=${videoId}`);
-        if (!statusRes.ok) return;
-
-        const { video } = await statusRes.json();
-
-        if (video.status === "review" || video.status === "approved" || video.status === "published") {
-          // Video is ready
-          if (pollRef.current) clearInterval(pollRef.current);
-          if (video.videoUrl) setVideoUrl(video.videoUrl);
-          setVideoGenerating(false);
-        } else if (video.status === "failed") {
-          if (pollRef.current) clearInterval(pollRef.current);
-          setVideoGenerating(false);
-          setVideoError("Video generation failed. You can try again from the dashboard.");
-        }
-        // If still "generating" or "draft", keep polling
-      } catch {
-        // Network error — keep trying
-      }
-    }, 5000); // Poll every 5 seconds
   };
 
   const completeOnboarding = async () => {
