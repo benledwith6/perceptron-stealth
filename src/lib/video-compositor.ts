@@ -24,6 +24,7 @@ export interface Cut {
   duration: number;          // how long this cut appears in final video
   generateDuration: number;  // how long to generate (always longer, we trim)
   prompt: string;            // generation prompt for this specific cut
+  dialogueScript?: string;   // extracted dialogue ONLY (no stage directions) — used for TTS
   camera: string;            // camera angle/style for this cut
   audio: string;             // what audio plays during this cut
   notes: string;             // editorial notes
@@ -345,7 +346,12 @@ export async function expandCutPrompts(
           industry,
           duration: cut.generateDuration,
         });
-        return { ...cut, prompt: expanded.expandedPrompt };
+        return {
+          ...cut,
+          prompt: expanded.expandedPrompt,
+          // Preserve the dialogue-only script from Gemini (used for TTS)
+          dialogueScript: expanded.script || undefined,
+        };
       } catch {
         return cut;
       }

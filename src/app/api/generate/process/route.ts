@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { requireAuth } from "@/lib/api-helpers";
-import { generateVideo, pollJobUntilDone } from "@/lib/generate";
+import { generateVideo, pollJobUntilDone, faceSwapSubmit, faceSwapPoll } from "@/lib/generate";
 import { expandCutPrompts, planComposition } from "@/lib/video-compositor";
 import { generateStartingFrame } from "@/lib/starting-frame";
 import { stitchCuts, isShotstackConfigured, StitchCut } from "@/lib/video-stitcher";
@@ -13,9 +13,9 @@ import { generateVoiceover } from "@/lib/voice-engine";
  *
  * Takes a videoId and runs ONE step of the pipeline per call:
  *   step=expand  → Expand prompts via Gemini (~3-5s)
- *   step=tts     → Generate TTS audio (~5-10s)
+ *   step=tts     → Generate TTS audio from DIALOGUE only (~5-10s)
  *   step=cut&i=0 → Generate video cut #i via FAL (submits async, ~1s)
- *   step=poll&i=0 → Poll FAL for cut #i completion (~1s per poll)
+ *   step=poll&i=0 → Poll FAL for cut #i → face swap → return done
  *   step=stitch  → Stitch all cuts via Shotstack (~1s to submit)
  *
  * Frontend calls these sequentially, staying within the 26s timeout.
@@ -53,22 +53,37 @@ export async function POST(req: NextRequest) {
         `═══ CUT ${i + 1}: ${c.type.toUpperCase()} (${c.duration}s) ═══\n${c.prompt}`
       ).join("\n\n");
 
-      // Store cut data as JSON in description for later steps
+      // Extract DIALOGUE ONLY from each cut for TTS (not production prompts)
+      const dialogueScripts = expandedPlan.format.cuts
+        .map(c => c.dialogueScript)
+        .filter(Boolean)
+        .join("\n\n");
+
+      // Store cut data as JSON in sourceReview for later steps
       const cutData = expandedPlan.format.cuts.map(c => ({
         index: c.index,
         type: c.type,
         duration: c.duration,
         generateDuration: c.generateDuration,
         prompt: c.prompt,
+        dialogueScript: c.dialogueScript || null,
       }));
 
       await prisma.video.update({
         where: { id: videoId },
         data: {
           script: allPrompts.substring(0, 5000),
-          sourceReview: JSON.stringify({ cuts: cutData, format: selectedFormat }),
+          sourceReview: JSON.stringify({
+            cuts: cutData,
+            format: selectedFormat,
+            // Store the original user script + extracted dialogue for TTS
+            originalScript: rawScript,
+            ttsDialogue: dialogueScripts || null,
+          }),
         },
       });
+
+      console.log(`[process/expand] ${cutData.length} cuts expanded. Dialogue for TTS: ${dialogueScripts ? dialogueScripts.length + ' chars' : 'none (will use original script)'}`);
 
       return NextResponse.json({
         status: "expanded",
@@ -81,9 +96,16 @@ export async function POST(req: NextRequest) {
     if (step === "tts") {
       let ttsAudioUrl: string | null = null;
 
-      if (rawScript && rawScript.length > 10) {
+      const meta = video.sourceReview ? JSON.parse(video.sourceReview as string) : {};
+
+      // FIX: Use extracted dialogue for TTS, NOT the full production prompts
+      // Priority: extracted dialogue → original user script → skip
+      const ttsText = meta.ttsDialogue || meta.originalScript || "";
+
+      if (ttsText && ttsText.length > 10) {
+        console.log(`[process/tts] Generating voiceover from dialogue (${ttsText.length} chars), NOT production prompts`);
         try {
-          const ttsResult = await generateVoiceover(rawScript);
+          const ttsResult = await generateVoiceover(ttsText);
           if (ttsResult.audioUrl) {
             if (isStorageConfigured() && !ttsResult.audioUrl.startsWith("data:")) {
               try {
@@ -99,17 +121,19 @@ export async function POST(req: NextRequest) {
               ttsAudioUrl = ttsResult.audioUrl;
             }
           }
+          console.log(`[process/tts] TTS result: provider=${ttsResult.provider}, hasAudio=${!!ttsAudioUrl}`);
         } catch (err) {
           console.error("[process/tts] TTS failed:", err);
         }
+      } else {
+        console.log("[process/tts] No dialogue text available for TTS — skipping");
       }
 
       // Store TTS URL in metadata
-      const existing = video.sourceReview ? JSON.parse(video.sourceReview as string) : {};
-      existing.ttsAudioUrl = ttsAudioUrl;
+      meta.ttsAudioUrl = ttsAudioUrl;
       await prisma.video.update({
         where: { id: videoId },
-        data: { sourceReview: JSON.stringify(existing) },
+        data: { sourceReview: JSON.stringify(meta) },
       });
 
       return NextResponse.json({
@@ -131,17 +155,73 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: `Cut ${i} not found` }, { status: 400 });
       }
 
-      // Get photo for starting frame
+      // Get user's primary photo (frontal face — best headshot)
       const photo = video.photoId
         ? await prisma.photo.findFirst({ where: { id: video.photoId } })
         : await prisma.photo.findFirst({ where: { userId: user.id, isPrimary: true } });
 
       const photoUrl = photo?.url || "";
 
-      // Submit to FAL (returns immediately with job ID)
+      // Gather ALL reference images for multi-reference models (Kling O1)
+      // 1. Character sheets (poses + 360°)
+      // 2. Other uploaded photos
+      const referenceImageUrls: string[] = [];
+
+      // Get the LATEST character sheets only (one poses + one 360°)
+      const posesSheet = await prisma.characterSheet.findFirst({
+        where: { userId: user.id, status: "complete", type: "poses" },
+        orderBy: { createdAt: "desc" },
+      });
+      const threeDSheet = await prisma.characterSheet.findFirst({
+        where: { userId: user.id, status: "complete", type: "3d_360" },
+        orderBy: { createdAt: "desc" },
+      });
+
+      if (posesSheet?.compositeUrl && !posesSheet.compositeUrl.startsWith("data:")) {
+        referenceImageUrls.push(posesSheet.compositeUrl);
+      }
+      if (threeDSheet?.compositeUrl && !threeDSheet.compositeUrl.startsWith("data:")) {
+        referenceImageUrls.push(threeDSheet.compositeUrl);
+      }
+
+      // Get the LATEST starting frame (generated anchor image for consistency)
+      const startingFrame = await prisma.photo.findFirst({
+        where: {
+          userId: user.id,
+          filename: { startsWith: "starting-frame" },
+          url: { not: { startsWith: "/uploads/" } },
+        },
+        orderBy: { createdAt: "desc" },
+      });
+
+      if (startingFrame?.url && !startingFrame.url.startsWith("data:")) {
+        referenceImageUrls.push(startingFrame.url);
+      }
+
+      // Get other user-uploaded photos (non-primary, max 2, skip starting frames)
+      const otherPhotos = await prisma.photo.findMany({
+        where: {
+          userId: user.id,
+          isPrimary: false,
+          NOT: { filename: { startsWith: "starting-frame" } },
+          url: { not: { startsWith: "/uploads/" } },
+        },
+        orderBy: { createdAt: "desc" },
+        take: 2,
+      });
+
+      for (const p of otherPhotos) {
+        if (p.url) referenceImageUrls.push(p.url);
+      }
+
+      console.log(`[process/cut] Cut ${i} — frontal photo: ${photoUrl.substring(0, 60)}...`);
+      console.log(`[process/cut] Cut ${i} — ${referenceImageUrls.length} reference images: ${referenceImageUrls.map(u => u.substring(0, 50)).join(", ")}`);
+
+      // Submit to FAL with all reference images
       const result = await generateVideo({
         model: selectedModel,
         photoUrl,
+        referenceImageUrls,
         voiceUrl: "",
         script: cut.prompt,
         userId: user.id,
@@ -157,6 +237,10 @@ export async function POST(req: NextRequest) {
         status: result.status,
         videoUrl: result.videoUrl || null,
         trimTo: cut.duration,
+        // Face swap fields (populated later)
+        swapJobId: null,
+        swapStatus: null,
+        swappedVideoUrl: null,
       };
       await prisma.video.update({
         where: { id: videoId },
@@ -177,7 +261,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // ─── STEP: POLL (check if a cut is done) ──────────────────
+    // ─── STEP: POLL (check if cut is done → face swap → done) ─
     if (step === "poll") {
       const i = cutIndex ?? 0;
       const meta = video.sourceReview ? JSON.parse(video.sourceReview as string) : {};
@@ -187,61 +271,174 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: `No job for cut ${i}` }, { status: 400 });
       }
 
-      if (cutJob.status === "completed" && cutJob.videoUrl) {
-        const cuts = meta.cuts || [];
-        const isLastCut = i >= cuts.length - 1;
+      // ── Phase 1: Video generation polling ──
+      if (cutJob.status !== "completed" || !cutJob.videoUrl) {
+        // Still waiting for Kling to finish
+        const { falPollOnce } = await import("@/lib/generate");
+        const pollResult = await falPollOnce(cutJob.jobId);
+
+        console.log(`[process/poll] Cut ${i} — FAL status: ${pollResult.status}, hasVideoUrl: ${!!pollResult.videoUrl}`);
+
+        cutJob.status = pollResult.status;
+        if (pollResult.videoUrl) cutJob.videoUrl = pollResult.videoUrl;
+        meta.cutJobs[i] = cutJob;
+        await prisma.video.update({
+          where: { id: videoId },
+          data: { sourceReview: JSON.stringify(meta) },
+        });
+
+        if (pollResult.status === "failed") {
+          console.error(`[process/poll] Cut ${i} FAILED: ${pollResult.error}`);
+          return NextResponse.json({
+            status: "cut_failed",
+            cutIndex: i,
+            error: pollResult.error || "Video generation failed",
+          });
+        }
+
+        if (pollResult.status !== "completed" || !pollResult.videoUrl) {
+          return NextResponse.json({
+            status: "polling",
+            cutIndex: i,
+            nextStep: "poll",
+            nextCutIndex: i,
+            retryAfter: 5,
+          });
+        }
+
+        // Video just completed! Fall through to face swap submission below
+        console.log(`[process/poll] Cut ${i} VIDEO COMPLETED — ${pollResult.videoUrl.substring(0, 80)}...`);
+      }
+
+      // ── Phase 2: Face swap ──
+      // If video is done but face swap hasn't started, submit it
+      if (!cutJob.swapJobId) {
+        // Get user's primary photo for face swap source
+        const facePhoto = await prisma.photo.findFirst({
+          where: { userId: user.id, isPrimary: true },
+        });
+
+        if (facePhoto?.url && cutJob.videoUrl) {
+          console.log(`[process/poll] Cut ${i} — submitting face swap...`);
+          const swapResult = await faceSwapSubmit(cutJob.videoUrl, facePhoto.url);
+
+          cutJob.swapJobId = swapResult.jobId;
+          cutJob.swapStatus = swapResult.status;
+          if (swapResult.videoUrl) cutJob.swappedVideoUrl = swapResult.videoUrl;
+
+          meta.cutJobs[i] = cutJob;
+          await prisma.video.update({
+            where: { id: videoId },
+            data: { sourceReview: JSON.stringify(meta) },
+          });
+
+          // If face swap completed instantly (skip/sync), mark as done
+          if (swapResult.status === "completed") {
+            const finalUrl = swapResult.videoUrl || cutJob.videoUrl;
+            cutJob.swappedVideoUrl = finalUrl;
+            meta.cutJobs[i] = cutJob;
+            await prisma.video.update({
+              where: { id: videoId },
+              data: { sourceReview: JSON.stringify(meta) },
+            });
+
+            const cuts = meta.cuts || [];
+            const isLastCut = i >= cuts.length - 1;
+            console.log(`[process/poll] Cut ${i} FACE SWAP DONE (instant) — ${finalUrl.substring(0, 80)}...`);
+            return NextResponse.json({
+              status: "cut_done",
+              cutIndex: i,
+              videoUrl: finalUrl,
+              nextStep: isLastCut ? "stitch" : "cut",
+              nextCutIndex: isLastCut ? undefined : i + 1,
+            });
+          }
+
+          // Face swap submitted async — tell frontend to keep polling
+          return NextResponse.json({
+            status: "polling",
+            cutIndex: i,
+            nextStep: "poll",
+            nextCutIndex: i,
+            retryAfter: 5,
+            phase: "face_swap",
+          });
+        } else {
+          // No face photo or no video URL — skip face swap
+          console.log(`[process/poll] Cut ${i} — skipping face swap (no face photo or video URL)`);
+          const cuts = meta.cuts || [];
+          const isLastCut = i >= cuts.length - 1;
+          return NextResponse.json({
+            status: "cut_done",
+            cutIndex: i,
+            videoUrl: cutJob.videoUrl,
+            nextStep: isLastCut ? "stitch" : "cut",
+            nextCutIndex: isLastCut ? undefined : i + 1,
+          });
+        }
+      }
+
+      // ── Phase 3: Poll face swap ──
+      if (cutJob.swapJobId && cutJob.swapStatus !== "completed") {
+        const swapResult = await faceSwapPoll(cutJob.swapJobId);
+
+        cutJob.swapStatus = swapResult.status;
+        if (swapResult.videoUrl) cutJob.swappedVideoUrl = swapResult.videoUrl;
+        meta.cutJobs[i] = cutJob;
+        await prisma.video.update({
+          where: { id: videoId },
+          data: { sourceReview: JSON.stringify(meta) },
+        });
+
+        if (swapResult.status === "completed") {
+          const finalUrl = swapResult.videoUrl || cutJob.videoUrl;
+          const cuts = meta.cuts || [];
+          const isLastCut = i >= cuts.length - 1;
+          console.log(`[process/poll] Cut ${i} FACE SWAP COMPLETED — ${finalUrl.substring(0, 80)}...`);
+          return NextResponse.json({
+            status: "cut_done",
+            cutIndex: i,
+            videoUrl: finalUrl,
+            nextStep: isLastCut ? "stitch" : "cut",
+            nextCutIndex: isLastCut ? undefined : i + 1,
+          });
+        }
+
+        if (swapResult.status === "failed") {
+          // Face swap failed — use original video (don't fail the pipeline)
+          console.error(`[process/poll] Cut ${i} face swap FAILED: ${swapResult.error} — using original video`);
+          const cuts = meta.cuts || [];
+          const isLastCut = i >= cuts.length - 1;
+          return NextResponse.json({
+            status: "cut_done",
+            cutIndex: i,
+            videoUrl: cutJob.videoUrl, // Fall back to un-swapped video
+            nextStep: isLastCut ? "stitch" : "cut",
+            nextCutIndex: isLastCut ? undefined : i + 1,
+          });
+        }
+
+        // Still processing face swap
         return NextResponse.json({
-          status: "cut_done",
+          status: "polling",
           cutIndex: i,
-          videoUrl: cutJob.videoUrl,
-          nextStep: isLastCut ? "stitch" : "cut",
-          nextCutIndex: isLastCut ? undefined : i + 1,
+          nextStep: "poll",
+          nextCutIndex: i,
+          retryAfter: 5,
+          phase: "face_swap",
         });
       }
 
-      // Poll FAL
-      const { falPollOnce } = await import("@/lib/generate");
-      const pollResult = await falPollOnce(cutJob.jobId);
-
-      console.log(`[process/poll] Cut ${i} — FAL status: ${pollResult.status}, hasVideoUrl: ${!!pollResult.videoUrl}`);
-
-      cutJob.status = pollResult.status;
-      if (pollResult.videoUrl) cutJob.videoUrl = pollResult.videoUrl;
-      meta.cutJobs[i] = cutJob;
-      await prisma.video.update({
-        where: { id: videoId },
-        data: { sourceReview: JSON.stringify(meta) },
-      });
-
-      if (pollResult.status === "completed") {
-        const cuts = meta.cuts || [];
-        const isLastCut = i >= cuts.length - 1;
-        console.log(`[process/poll] Cut ${i} COMPLETED — videoUrl: ${pollResult.videoUrl?.substring(0, 80)}...`);
-        return NextResponse.json({
-          status: "cut_done",
-          cutIndex: i,
-          videoUrl: pollResult.videoUrl,
-          nextStep: isLastCut ? "stitch" : "cut",
-          nextCutIndex: isLastCut ? undefined : i + 1,
-        });
-      }
-
-      if (pollResult.status === "failed") {
-        console.error(`[process/poll] Cut ${i} FAILED: ${pollResult.error}`);
-        return NextResponse.json({
-          status: "cut_failed",
-          cutIndex: i,
-          error: pollResult.error || "Video generation failed",
-        });
-      }
-
-      console.log(`[process/poll] Cut ${i} still processing — returning "polling"`);
+      // Face swap already completed — return done
+      const finalUrl = cutJob.swappedVideoUrl || cutJob.videoUrl;
+      const cuts = meta.cuts || [];
+      const isLastCut = i >= cuts.length - 1;
       return NextResponse.json({
-        status: "polling",
+        status: "cut_done",
         cutIndex: i,
-        nextStep: "poll",
-        nextCutIndex: i,
-        retryAfter: 5,
+        videoUrl: finalUrl,
+        nextStep: isLastCut ? "stitch" : "cut",
+        nextCutIndex: isLastCut ? undefined : i + 1,
       });
     }
 
@@ -252,11 +449,15 @@ export async function POST(req: NextRequest) {
 
       console.log(`[process/stitch] cutJobs:`, JSON.stringify(cutJobs, null, 2));
 
+      // Use face-swapped video URLs when available, fall back to originals
       const completedCuts: StitchCut[] = Object.values(cutJobs)
-        .filter((j: any) => j.videoUrl)
-        .map((j: any) => ({ videoUrl: j.videoUrl, trimTo: j.trimTo }));
+        .filter((j: any) => j.swappedVideoUrl || j.videoUrl)
+        .map((j: any) => ({
+          videoUrl: j.swappedVideoUrl || j.videoUrl,
+          trimTo: j.trimTo,
+        }));
 
-      console.log(`[process/stitch] ${completedCuts.length} cuts with videoUrls out of ${Object.keys(cutJobs).length} total`);
+      console.log(`[process/stitch] ${completedCuts.length} cuts ready for stitch out of ${Object.keys(cutJobs).length} total`);
 
       if (completedCuts.length === 0) {
         return NextResponse.json({ error: "No completed cuts to stitch" }, { status: 400 });

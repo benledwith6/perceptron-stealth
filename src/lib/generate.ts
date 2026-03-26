@@ -27,7 +27,8 @@ import {
 
 export interface GenerateVideoParams {
   model: string;
-  photoUrl: string;
+  photoUrl: string;          // primary photo (frontal face)
+  referenceImageUrls?: string[];  // additional reference images (character sheets, other photos)
   voiceUrl: string;
   script: string;
   userId: string;
@@ -80,10 +81,49 @@ interface FalModelConfig {
 }
 
 const FAL_MODELS: Record<string, FalModelConfig> = {
+  // ─── PRIMARY MODEL: Kling O1 with multi-reference support ───
   "kling_2.6": {
+    falId: "fal-ai/kling-video/o1/reference-to-video",
+    name: "Kling O1 Reference",
+    description: "Multi-reference character consistency — sends all photos + character sheets",
+    maxDuration: 10,
+    supportsImage: true,
+    supportsAudio: false,
+    buildPayload: (p) => {
+      // Build the elements array with character reference images
+      // @Element1 in the prompt = the person (all their reference images)
+      const elements: Array<{
+        frontal_image_url: string;
+        reference_image_urls?: string[];
+      }> = [];
+
+      if (p.photoUrl) {
+        elements.push({
+          frontal_image_url: p.photoUrl,
+          // Additional reference images: character sheets, other photos
+          reference_image_urls: (p.referenceImageUrls || []).filter(Boolean).slice(0, 5), // max ~5 refs + frontal = 6, under 7 limit
+        });
+      }
+
+      // Prepend @Element1 to the prompt so Kling knows to use the character reference
+      const promptWithRef = elements.length > 0
+        ? `@Element1 ${(p.script || "").substring(0, 2400)}`
+        : (p.script || "").substring(0, 2500);
+
+      return {
+        prompt: promptWithRef,
+        elements: elements.length > 0 ? elements : undefined,
+        duration: (p.duration || 5) >= 8 ? "10" : "5",
+        aspect_ratio: "9:16",
+      };
+    },
+  },
+
+  // Fallback: Kling 2.6 single-image (if O1 not available)
+  "kling_2.6_single": {
     falId: "fal-ai/kling-video/v2.6/pro/image-to-video",
-    name: "Kling 2.6 Pro",
-    description: "Hyper-realistic, best for talking heads and testimonials",
+    name: "Kling 2.6 Pro (Single Image)",
+    description: "Hyper-realistic, single reference image only",
     maxDuration: 10,
     supportsImage: true,
     supportsAudio: false,
@@ -164,20 +204,29 @@ const FAL_MODELS: Record<string, FalModelConfig> = {
     }),
   },
 
-  // Legacy aliases — route to FAL equivalents
+  // Legacy aliases — route to Kling O1
   "seedance_2.0": {
-    falId: "fal-ai/kling-video/v2.6/pro/image-to-video",
-    name: "Seedance 2.0 → Kling 2.6 Pro",
-    description: "Routed to Kling 2.6 Pro via FAL",
+    falId: "fal-ai/kling-video/o1/reference-to-video",
+    name: "Seedance 2.0 → Kling O1",
+    description: "Routed to Kling O1 with multi-reference",
     maxDuration: 10,
     supportsImage: true,
     supportsAudio: false,
-    buildPayload: (p) => ({
-      prompt: (p.script || "").substring(0, 2500),
-      image_url: p.photoUrl,
-      duration: (p.duration || 5) >= 8 ? "10" : "5",
-      aspect_ratio: "9:16",
-    }),
+    buildPayload: (p) => {
+      const elements: Array<{ frontal_image_url: string; reference_image_urls?: string[] }> = [];
+      if (p.photoUrl) {
+        elements.push({
+          frontal_image_url: p.photoUrl,
+          reference_image_urls: (p.referenceImageUrls || []).filter(Boolean).slice(0, 5),
+        });
+      }
+      return {
+        prompt: elements.length > 0 ? `@Element1 ${(p.script || "").substring(0, 2400)}` : (p.script || "").substring(0, 2500),
+        elements: elements.length > 0 ? elements : undefined,
+        duration: (p.duration || 5) >= 8 ? "10" : "5",
+        aspect_ratio: "9:16",
+      };
+    },
   },
 
   "sora_2": {
@@ -475,6 +524,147 @@ export async function pollJobUntilDone(
   // Timeout
   await prisma.video.update({ where: { id: videoId }, data: { status: "failed" } });
   console.error(`[Poll] Video ${videoId} timed out after ${Math.round((Date.now() - startTime) / 1000)}s`);
+}
+
+// ─── Face Swap (Post-Processing) ────────────────────────────────
+//
+// After generating a video cut, we face-swap the user's real face onto it.
+// This corrects identity drift (wrong eye color, facial structure, etc.)
+// Uses: fal-ai/face-swap via FAL
+
+export interface FaceSwapResult {
+  jobId: string;
+  status: "processing" | "completed" | "failed";
+  videoUrl?: string;
+  error?: string;
+}
+
+export async function faceSwapSubmit(
+  targetVideoUrl: string,
+  sourceFaceUrl: string
+): Promise<FaceSwapResult> {
+  const apiKey = getFalKey();
+  if (!apiKey) {
+    console.log("[face-swap] No FAL key — skipping face swap");
+    return { jobId: "skip", status: "completed", videoUrl: targetVideoUrl };
+  }
+
+  try {
+    console.log(`[face-swap] Submitting: face=${sourceFaceUrl.substring(0, 60)}... video=${targetVideoUrl.substring(0, 60)}...`);
+
+    // fal-ai/face-swap: source_url = face to extract, target_url = media to swap onto
+    const response = await fetch("https://queue.fal.run/fal-ai/face-swap", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Key ${apiKey}`,
+      },
+      body: JSON.stringify({
+        source_url: sourceFaceUrl,
+        target_url: targetVideoUrl,
+      }),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error(`[face-swap] Submit error (${response.status}):`, errText.substring(0, 300));
+      // Don't fail the pipeline — return original video
+      return { jobId: "skip", status: "completed", videoUrl: targetVideoUrl };
+    }
+
+    const data = await response.json();
+
+    if (!data.request_id) {
+      // Sync result — face-swap may return image.url or video.url
+      const videoUrl = data.video?.url || data.image?.url || data.output?.url;
+      if (videoUrl) {
+        return { jobId: "sync", status: "completed", videoUrl };
+      }
+      console.error("[face-swap] No request_id:", JSON.stringify(data).substring(0, 300));
+      return { jobId: "skip", status: "completed", videoUrl: targetVideoUrl };
+    }
+
+    const statusUrl = data.status_url;
+    const responseUrl = data.response_url;
+    console.log(`[face-swap] Job submitted: ${data.request_id}`);
+
+    return {
+      jobId: `SWAP::${statusUrl}::${responseUrl}`,
+      status: "processing",
+    };
+  } catch (err: any) {
+    console.error("[face-swap] Submit exception:", err.message);
+    return { jobId: "skip", status: "completed", videoUrl: targetVideoUrl };
+  }
+}
+
+export async function faceSwapPoll(compositeJobId: string): Promise<FaceSwapResult> {
+  // Skip/sync jobs are already done
+  if (compositeJobId === "skip" || compositeJobId === "sync") {
+    return { jobId: compositeJobId, status: "completed" };
+  }
+
+  const apiKey = getFalKey();
+  if (!apiKey) return { jobId: compositeJobId, status: "failed", error: "No API key" };
+
+  const parts = compositeJobId.split("::");
+  if (parts.length < 3 || parts[0] !== "SWAP") {
+    return { jobId: compositeJobId, status: "failed", error: "Invalid swap job ID format" };
+  }
+
+  const statusUrl = parts[1];
+  const responseUrl = parts[2];
+
+  try {
+    const statusRes = await fetch(statusUrl, {
+      headers: { Authorization: `Key ${apiKey}` },
+    });
+
+    if (!statusRes.ok) {
+      return { jobId: compositeJobId, status: "failed", error: `Status check failed: ${statusRes.status}` };
+    }
+
+    const statusData = await statusRes.json();
+    console.log(`[face-swap] Poll status: ${statusData.status}`);
+
+    if (statusData.status === "COMPLETED") {
+      // Check embedded result — face-swap returns image.url for images, video.url for videos
+      const embeddedUrl = statusData.video?.url || statusData.image?.url || statusData.output?.url;
+      if (embeddedUrl) {
+        return { jobId: compositeJobId, status: "completed", videoUrl: embeddedUrl };
+      }
+
+      // Fetch full result
+      const resultRes = await fetch(responseUrl, {
+        headers: { Authorization: `Key ${apiKey}` },
+      });
+
+      if (!resultRes.ok) {
+        console.error(`[face-swap] Response fetch failed: ${resultRes.status}`);
+        return { jobId: compositeJobId, status: "failed", error: `Response fetch failed: ${resultRes.status}` };
+      }
+
+      const result = await resultRes.json();
+      const videoUrl = result.video?.url || result.image?.url || result.output?.url || result.video_url;
+
+      if (!videoUrl) {
+        console.error("[face-swap] Completed but no video URL. Keys:", Object.keys(result).join(", "));
+        return { jobId: compositeJobId, status: "failed", error: "No video URL in result" };
+      }
+
+      console.log(`[face-swap] Completed: ${videoUrl.substring(0, 80)}...`);
+      return { jobId: compositeJobId, status: "completed", videoUrl };
+    }
+
+    if (statusData.status === "FAILED") {
+      return { jobId: compositeJobId, status: "failed", error: statusData.error || "Face swap failed" };
+    }
+
+    return { jobId: compositeJobId, status: "processing" };
+  } catch (err: any) {
+    console.error("[face-swap] Poll exception:", err.message);
+    return { jobId: compositeJobId, status: "failed", error: err.message };
+  }
 }
 
 // ─── Utilities ──────────────────────────────────────────────────

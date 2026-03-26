@@ -124,11 +124,26 @@ export async function extractCharacterProfile(
     }
   }
 
-  // Add character sheet composite if available
-  if (sheet?.compositeUrl?.startsWith("data:")) {
-    const match = sheet.compositeUrl.match(/^data:([^;]+);base64,(.+)$/);
-    if (match) {
-      parts.push({ inlineData: { mimeType: match[1], data: match[2] } });
+  // Add character sheet composite if available (handles both data URIs and Supabase URLs)
+  if (sheet?.compositeUrl) {
+    if (sheet.compositeUrl.startsWith("data:")) {
+      const match = sheet.compositeUrl.match(/^data:([^;]+);base64,(.+)$/);
+      if (match) {
+        parts.push({ inlineData: { mimeType: match[1], data: match[2] } });
+      }
+    } else if (sheet.compositeUrl.startsWith("http")) {
+      try {
+        const res = await fetch(sheet.compositeUrl);
+        if (res.ok) {
+          const buffer = await res.arrayBuffer();
+          parts.push({
+            inlineData: {
+              mimeType: res.headers.get("content-type") || "image/png",
+              data: Buffer.from(buffer).toString("base64"),
+            },
+          });
+        }
+      } catch {}
     }
   }
 
