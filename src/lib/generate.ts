@@ -36,6 +36,10 @@ export interface GenerateVideoParams {
   duration?: number;
   usePromptEngine?: boolean;
   industry?: string;
+  /** User's original reference photo URL (frontal view for character identity) */
+  referencePhotoUrl?: string;
+  /** Character sheet URLs [poses composite, 360 composite] for multi-angle reference */
+  characterSheetUrls?: string[];
 }
 
 export interface GenerateResult {
@@ -88,12 +92,22 @@ const FAL_MODELS: Record<string, FalModelConfig> = {
     maxDuration: 10,
     supportsImage: true,
     supportsAudio: false,
-    buildPayload: (p) => ({
-      prompt: p.script,
-      image_url: p.photoUrl,
-      duration: String(Math.min(p.duration || 5, 10)),
-      aspect_ratio: "9:16",
-    }),
+    buildPayload: (p) => {
+      // Kling 2.6 Pro image-to-video does NOT support the elements parameter.
+      // Character consistency is achieved via the starting frame (generated from
+      // character sheets + reference photo by Gemini) which is passed as image_url.
+      const MAX_PROMPT = 2500;
+      const trimmedPrompt = p.script.length > MAX_PROMPT
+        ? p.script.substring(0, MAX_PROMPT - 3) + "..."
+        : p.script;
+
+      return {
+        prompt: trimmedPrompt,
+        image_url: p.photoUrl,
+        duration: (p.duration || 5) <= 5 ? "5" : "10",  // Kling only accepts "5" or "10"
+        aspect_ratio: "9:16",
+      };
+    },
   },
 
   "minimax_video": {
@@ -165,6 +179,41 @@ const FAL_MODELS: Record<string, FalModelConfig> = {
     }),
   },
 
+  // Kling 1.6 Elements — supports multiple reference images for character consistency
+  "kling_elements": {
+    falId: "fal-ai/kling-video/v1.6/standard/elements",
+    name: "Kling 1.6 Elements",
+    description: "Multi-image character reference, best consistency across cuts",
+    maxDuration: 10,
+    supportsImage: true,
+    supportsAudio: false,
+    buildPayload: (p) => {
+      // Collect all reference images: reference photo + character sheets (up to 4 total)
+      const allImages: string[] = [];
+      if (p.referencePhotoUrl) allImages.push(p.referencePhotoUrl);
+      if (p.characterSheetUrls) {
+        for (const url of p.characterSheetUrls) {
+          if (url && allImages.length < 4) allImages.push(url);
+        }
+      }
+      // Fallback: use the starting frame if no other references
+      if (allImages.length === 0 && p.photoUrl) allImages.push(p.photoUrl);
+
+      const MAX_PROMPT = 2500;
+      const trimmedPrompt = p.script.length > MAX_PROMPT
+        ? p.script.substring(0, MAX_PROMPT - 3) + "..."
+        : p.script;
+
+      console.log(`[Kling Elements] Sending ${allImages.length} reference images`);
+      return {
+        prompt: trimmedPrompt,
+        input_image_urls: allImages,
+        duration: (p.duration || 5) <= 5 ? "5" : "10",
+        aspect_ratio: "9:16",
+      };
+    },
+  },
+
   // Legacy aliases — route to FAL equivalents
   "seedance_2.0": {
     falId: "fal-ai/kling-video/v2.6/pro/image-to-video",
@@ -173,12 +222,19 @@ const FAL_MODELS: Record<string, FalModelConfig> = {
     maxDuration: 10,
     supportsImage: true,
     supportsAudio: false,
-    buildPayload: (p) => ({
-      prompt: p.script,
-      image_url: p.photoUrl,
-      duration: String(Math.min(p.duration || 5, 10)),
-      aspect_ratio: "9:16",
-    }),
+    buildPayload: (p) => {
+      const MAX_PROMPT = 2500;
+      const trimmedPrompt = p.script.length > MAX_PROMPT
+        ? p.script.substring(0, MAX_PROMPT - 3) + "..."
+        : p.script;
+
+      return {
+        prompt: trimmedPrompt,
+        image_url: p.photoUrl,
+        duration: (p.duration || 5) <= 5 ? "5" : "10",
+        aspect_ratio: "9:16",
+      };
+    },
   },
 
   "sora_2": {
@@ -309,7 +365,10 @@ async function falPoll(compositeJobId: string): Promise<PollResult> {
       });
 
       if (!resultRes.ok) {
-        return { status: "completed" };
+        const errBody = await resultRes.text().catch(() => "");
+        console.error(`[FAL] Result fetch failed (${resultRes.status}) for completed job. URL: ${responseUrl}`);
+        console.error(`[FAL] Result error body: ${errBody.substring(0, 500)}`);
+        return { status: "failed", error: `FAL result fetch failed: ${resultRes.status} — ${errBody.substring(0, 200)}` };
       }
 
       const result = await resultRes.json();
@@ -381,6 +440,9 @@ export async function generateVideo(params: GenerateVideoParams): Promise<Genera
   const payload = modelConfig.buildPayload({ ...params, script: finalScript });
   console.log(`[generate] Submitting to FAL model: ${modelConfig.falId}`);
   console.log(`[generate] Payload keys: ${Object.keys(payload).join(", ")}`);
+  if (payload.elements) {
+    console.log(`[generate] Elements: ${JSON.stringify(payload.elements).substring(0, 500)}`);
+  }
 
   const result = await falSubmit(modelConfig.falId, payload);
   return { ...result, expandedPrompt };

@@ -3,22 +3,29 @@ import { z } from "zod";
 // ─── Auth Schemas ────────────────────────────────────────────────
 
 export const signupSchema = z.object({
-  email: z.string().email("Invalid email address"),
+  email: z.string().trim().toLowerCase().email("Invalid email address"),
   password: z
     .string()
     .min(8, "Password must be at least 8 characters")
+    .max(128, "Password must be 128 characters or less")
     .regex(/[A-Z]/, "Password must contain at least one uppercase letter")
-    .regex(/[0-9]/, "Password must contain at least one number"),
+    .regex(/[a-z]/, "Password must contain at least one lowercase letter")
+    .regex(/[0-9]/, "Password must contain at least one number")
+    .regex(/[^A-Za-z0-9]/, "Password must contain at least one special character"),
   firstName: z
     .string()
+    .trim()
     .min(1, "First name is required")
-    .max(100, "First name must be 100 characters or less"),
+    .max(100, "First name must be 100 characters or less")
+    .regex(/^[^<>&"']*$/, "First name contains invalid characters"),
   lastName: z
     .string()
+    .trim()
     .min(1, "Last name is required")
-    .max(100, "Last name must be 100 characters or less"),
-  industry: z.string().optional(),
-  company: z.string().max(200, "Company name must be 200 characters or less").optional(),
+    .max(100, "Last name must be 100 characters or less")
+    .regex(/^[^<>&"']*$/, "Last name contains invalid characters"),
+  industry: z.string().trim().max(100).optional(),
+  company: z.string().trim().max(200, "Company name must be 200 characters or less").optional(),
 });
 
 export type SignupInput = z.infer<typeof signupSchema>;
@@ -28,10 +35,11 @@ export type SignupInput = z.infer<typeof signupSchema>;
 export const videoCreateSchema = z.object({
   title: z
     .string()
+    .trim()
     .min(1, "Title is required")
     .max(200, "Title must be 200 characters or less"),
-  description: z.string().max(2000, "Description must be 2000 characters or less").optional(),
-  script: z.string().max(5000, "Script must be 5000 characters or less").optional(),
+  description: z.string().trim().max(2000, "Description must be 2000 characters or less").optional(),
+  script: z.string().trim().max(5000, "Script must be 5000 characters or less").optional(),
   model: z.string().max(50).optional().default("kling_2.6"),
   contentType: z.string().max(50).optional().default("general"),
   sourceReview: z.string().max(5000).optional(),
@@ -88,11 +96,9 @@ export const voiceSampleSchema = z.object({
   url: z.string().url("Invalid URL"),
   duration: z
     .number()
-    .int("Duration must be a whole number")
     .min(0, "Duration cannot be negative")
     .max(600, "Duration must be 10 minutes or less")
-    .optional()
-    .default(0),
+    .optional(),
   isDefault: z.boolean().optional().default(false),
 });
 

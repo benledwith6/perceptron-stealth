@@ -44,6 +44,16 @@ Each hook must:
 Return a JSON array of exactly 5 objects:
 [{ "hook": "the hook text", "type": "question|negative|curiosity|personal|bold", "energy": "calm|urgent|conspiratorial|excited|thoughtful" }]`;
 
+function getFallbackHooks(topic: string): HookVariation[] {
+  return [
+    { hook: `Okay real quick — ${topic}`, type: "curiosity", energy: "urgent" },
+    { hook: `Stop what you're doing. ${topic}`, type: "bold", energy: "conspiratorial" },
+    { hook: `I wasn't gonna post this but... ${topic}`, type: "personal", energy: "thoughtful" },
+    { hook: `Everyone's getting this wrong about ${topic}`, type: "negative", energy: "calm" },
+    { hook: `What if I told you ${topic} is not what you think?`, type: "curiosity", energy: "excited" },
+  ];
+}
+
 export async function generateHookVariations(
   topic: string,
   industry?: string
@@ -80,14 +90,23 @@ export async function generateHookVariations(
       }
     );
 
-    if (!response.ok) return [];
+    if (!response.ok) {
+      console.error("[hook-generator] Gemini error:", response.status);
+      return getFallbackHooks(topic);
+    }
 
     const data = await response.json();
     const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-    if (!text) return [];
+    if (!text) return getFallbackHooks(topic);
 
-    return JSON.parse(text) as HookVariation[];
-  } catch {
-    return [];
+    const parsed = JSON.parse(text) as HookVariation[];
+    // Validate that we got a non-empty array
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      return getFallbackHooks(topic);
+    }
+    return parsed;
+  } catch (err) {
+    console.error("[hook-generator] Error:", err);
+    return getFallbackHooks(topic);
   }
 }

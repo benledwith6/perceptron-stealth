@@ -4,6 +4,31 @@ import { requireAuth } from "@/lib/api-helpers";
 import { videoUpdateSchema } from "@/lib/validations";
 import { validateBody } from "@/lib/validate";
 
+export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+  try {
+    const { error, user } = await requireAuth();
+    if (error) return error;
+
+    if (!params.id) {
+      return NextResponse.json({ error: "Video ID is required" }, { status: 400 });
+    }
+
+    const video = await prisma.video.findFirst({
+      where: { id: params.id, userId: user.id },
+      include: { photo: true, voice: true, schedule: true },
+    });
+
+    if (!video) {
+      return NextResponse.json({ error: "Video not found" }, { status: 404 });
+    }
+
+    return NextResponse.json(video);
+  } catch (error) {
+    console.error("[GET /api/videos/:id] Unexpected error:", error);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
+}
+
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   try {
     const { error, user } = await requireAuth();
@@ -41,7 +66,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       return NextResponse.json({ error: "Video not found" }, { status: 404 });
     }
 
-    const updated = await prisma.video.findUnique({ where: { id: params.id } });
+    const updated = await prisma.video.findFirst({ where: { id: params.id, userId: user.id } });
     return NextResponse.json(updated);
   } catch (error) {
     console.error("[PATCH /api/videos/:id] Unexpected error:", error);

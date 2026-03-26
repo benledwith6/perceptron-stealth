@@ -1,3 +1,5 @@
+"use client";
+
 import Link from "next/link";
 
 const footerLinks = {
@@ -59,8 +61,8 @@ export default function Footer() {
             &copy; {new Date().getFullYear()} Official AI. All rights reserved.
           </span>
           <div className="flex items-center gap-6">
-            <span className="text-[12px] text-white/10">Privacy</span>
-            <span className="text-[12px] text-white/10">Terms</span>
+            <Link href="/privacy" className="text-[12px] text-white/10 hover:text-white/30 transition-colors">Privacy</Link>
+            <Link href="/terms" className="text-[12px] text-white/10 hover:text-white/30 transition-colors">Terms</Link>
           </div>
         </div>
       </div>

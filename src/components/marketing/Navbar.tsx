@@ -90,6 +90,7 @@ export default function Navbar() {
             onClick={() => setMobileOpen(!mobileOpen)}
             className="md:hidden relative z-10 p-2.5 -mr-2 rounded-lg hover:bg-white/[0.05] active:bg-white/[0.08] transition-colors min-w-[44px] min-h-[44px] flex items-center justify-center"
             aria-label={mobileOpen ? "Close menu" : "Open menu"}
+            aria-expanded={mobileOpen}
           >
             {mobileOpen ? (
               <X className="w-5 h-5 text-white/70" />
@@ -109,7 +110,7 @@ export default function Navbar() {
         }`}
       >
         <div
-          className="absolute inset-0 bg-[#050508]/95 backdrop-blur-xl"
+          className="absolute inset-0 bg-[#050508]/98 backdrop-blur-xl"
           onClick={() => setMobileOpen(false)}
         />
         <div

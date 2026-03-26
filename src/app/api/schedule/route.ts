@@ -4,17 +4,28 @@ import { requireAuth } from "@/lib/api-helpers";
 import { scheduleCreateSchema } from "@/lib/validations";
 import { validateBody } from "@/lib/validate";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
     const { error, user } = await requireAuth();
     if (error) return error;
 
-    const schedules = await prisma.schedule.findMany({
-      where: { userId: user.id },
-      include: { video: true },
-      orderBy: { scheduledAt: "asc" },
-    });
-    return NextResponse.json(schedules);
+    const { searchParams } = new URL(req.url);
+    const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(searchParams.get("limit") || "50", 10) || 50));
+    const skip = (page - 1) * limit;
+
+    const where = { userId: user.id };
+    const [schedules, total] = await Promise.all([
+      prisma.schedule.findMany({
+        where,
+        include: { video: true },
+        orderBy: { scheduledAt: "asc" },
+        skip,
+        take: limit,
+      }),
+      prisma.schedule.count({ where }),
+    ]);
+    return NextResponse.json({ data: schedules, total, page, limit });
   } catch (error) {
     console.error("[GET /api/schedule] Unexpected error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
@@ -65,7 +76,7 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    return NextResponse.json(schedule);
+    return NextResponse.json(schedule, { status: 201 });
   } catch (error) {
     console.error("[POST /api/schedule] Unexpected error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

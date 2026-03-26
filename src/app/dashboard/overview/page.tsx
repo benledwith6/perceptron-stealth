@@ -56,16 +56,24 @@ export default function OverviewPage() {
   const [videos, setVideos] = useState<VideoItem[]>([]);
   const [schedules, setSchedules] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    const controller = new AbortController();
     Promise.all([
-      fetch("/api/videos").then((r) => (r.ok ? r.json() : [])),
-      fetch("/api/schedule").then((r) => (r.ok ? r.json() : [])),
+      fetch("/api/videos", { signal: controller.signal }).then((r) => (r.ok ? r.json() : [])),
+      fetch("/api/schedule", { signal: controller.signal }).then((r) => (r.ok ? r.json() : [])),
     ]).then(([v, s]) => {
-      setVideos(v);
-      setSchedules(s);
+      setVideos(Array.isArray(v) ? v : []);
+      setSchedules(Array.isArray(s) ? s : []);
       setLoading(false);
-    }).catch(() => setLoading(false));
+    }).catch((err) => {
+      if (err.name !== "AbortError") {
+        setError("Failed to load dashboard data. Please try again.");
+        setLoading(false);
+      }
+    });
+    return () => controller.abort();
   }, []);
 
   const totalVideos = videos.length;
@@ -78,6 +86,20 @@ export default function OverviewPage() {
     return (
       <div className="flex items-center justify-center py-32">
         <Loader2 className="w-5 h-5 text-white/20 animate-spin" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="max-w-7xl mx-auto text-center py-24">
+        <p className="text-[14px] text-red-400/70 mb-4">{error}</p>
+        <button
+          onClick={() => { setError(null); setLoading(true); window.location.reload(); }}
+          className="px-4 py-2 rounded-xl bg-white/[0.06] text-sm text-white/60 hover:bg-white/[0.1] transition-all"
+        >
+          Retry
+        </button>
       </div>
     );
   }

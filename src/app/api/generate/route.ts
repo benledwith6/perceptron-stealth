@@ -29,6 +29,8 @@ export async function POST(req: NextRequest) {
           { status: 429, headers: { "Retry-After": String(err.retryAfter) } }
         );
       }
+      // Re-throw unexpected errors so they hit the outer catch
+      throw err;
     }
 
     let body: unknown;

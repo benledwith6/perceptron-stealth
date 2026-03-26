@@ -61,7 +61,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    return NextResponse.json(photo);
+    return NextResponse.json(photo, { status: 201 });
   } catch (error) {
     console.error("[POST /api/photos] Unexpected error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

@@ -132,37 +132,28 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Create schedule records for each platform
-    for (const platform of platforms) {
-      // Upsert: if a schedule already exists for this video, update it
-      const existing = await prisma.schedule.findUnique({
-        where: { videoId },
-      });
+    // Upsert a single schedule record for this video.
+    // The schedule model has a unique videoId constraint, so we store
+    // the comma-joined platform list to represent multi-platform publishing.
+    const platformList = matchedAccounts.map((a) => a.platform).join(",");
 
-      if (existing) {
-        await prisma.schedule.update({
-          where: { id: existing.id },
-          data: {
-            platform,
-            scheduledAt: scheduledAt ? new Date(scheduledAt) : new Date(),
-            status: isImmediate ? "published" : "scheduled",
-            publishedAt: isImmediate ? new Date() : null,
-          },
-        });
-      } else {
-        await prisma.schedule.create({
-          data: {
-            videoId,
-            userId: user.id,
-            platform,
-            scheduledAt: scheduledAt ? new Date(scheduledAt) : new Date(),
-            status: isImmediate ? "published" : "scheduled",
-            publishedAt: isImmediate ? new Date() : null,
-          },
-        });
-        break; // Schedule model has unique videoId constraint — one schedule per video
-      }
-    }
+    await prisma.schedule.upsert({
+      where: { videoId },
+      update: {
+        platform: platformList,
+        scheduledAt: scheduledAt ? new Date(scheduledAt) : new Date(),
+        status: isImmediate ? "published" : "scheduled",
+        publishedAt: isImmediate ? new Date() : null,
+      },
+      create: {
+        videoId,
+        userId: user.id,
+        platform: platformList,
+        scheduledAt: scheduledAt ? new Date(scheduledAt) : new Date(),
+        status: isImmediate ? "published" : "scheduled",
+        publishedAt: isImmediate ? new Date() : null,
+      },
+    });
 
     // 7. Return result
     return NextResponse.json({

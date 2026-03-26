@@ -96,6 +96,7 @@ export default function GeneratePage() {
   const [industry] = useState("other");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const modelPickerRef = useRef<HTMLDivElement>(null);
 
   // Track the currently-generating video for progress polling
   const [activeVideoId, setActiveVideoId] = useState<string | null>(null);
@@ -148,6 +149,18 @@ export default function GeneratePage() {
       setActiveVideoId(null);
     }, []),
   });
+
+  // Close model picker on outside click
+  useEffect(() => {
+    if (!showModelPicker) return;
+    function handleClickOutside(e: MouseEvent) {
+      if (modelPickerRef.current && !modelPickerRef.current.contains(e.target as Node)) {
+        setShowModelPicker(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [showModelPicker]);
 
   // Load user industry on mount
   useEffect(() => {
@@ -393,7 +406,7 @@ export default function GeneratePage() {
           </select>
 
           {/* Model Picker */}
-          <div className="relative">
+          <div className="relative" ref={modelPickerRef}>
             <button
               onClick={() => setShowModelPicker(!showModelPicker)}
               className="flex items-center gap-2 px-3 py-2.5 min-h-[44px] rounded-xl border border-white/[0.06] text-[13px] text-white/60 hover:border-white/10 active:bg-white/[0.03] transition-all"

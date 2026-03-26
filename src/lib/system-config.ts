@@ -3,6 +3,19 @@ import prisma from "./prisma";
 // In-memory cache with TTL
 const cache = new Map<string, { value: string; expiresAt: number }>();
 const CACHE_TTL_MS = 30_000; // 30 seconds
+const MAX_CACHE_SIZE = 200;
+
+/**
+ * Evict expired entries from the cache to prevent unbounded memory growth.
+ */
+function evictExpiredCacheEntries(): void {
+  const now = Date.now();
+  for (const [k, v] of cache) {
+    if (v.expiresAt <= now) {
+      cache.delete(k);
+    }
+  }
+}
 
 /**
  * Get a system config value by key.
@@ -16,8 +29,23 @@ export async function getConfig(key: string, defaultValue: string = ""): Promise
     return cached.value;
   }
 
+  // Remove expired entry if TTL has passed
+  if (cached) {
+    cache.delete(key);
+  }
+
   const row = await prisma.systemConfig.findUnique({ where: { key } });
   const value = row?.value ?? defaultValue;
+
+  // Prevent unbounded cache growth
+  if (cache.size >= MAX_CACHE_SIZE) {
+    evictExpiredCacheEntries();
+    // If still at capacity after eviction, clear oldest entries
+    if (cache.size >= MAX_CACHE_SIZE) {
+      const firstKey = cache.keys().next().value;
+      if (firstKey !== undefined) cache.delete(firstKey);
+    }
+  }
 
   cache.set(key, { value, expiresAt: Date.now() + CACHE_TTL_MS });
   return value;
@@ -37,14 +65,16 @@ export async function getConfigJSON<T>(key: string, defaultValue: T): Promise<T>
 }
 
 /**
- * Set a system config value. Clears the cache for that key.
+ * Set a system config value (creates if it doesn't exist). Updates the cache.
  */
 export async function setConfig(key: string, value: string): Promise<void> {
-  await prisma.systemConfig.update({
+  await prisma.systemConfig.upsert({
     where: { key },
-    data: { value },
+    update: { value },
+    create: { key, value },
   });
-  cache.delete(key);
+  // Update cache immediately instead of just deleting
+  cache.set(key, { value, expiresAt: Date.now() + CACHE_TTL_MS });
 }
 
 /**

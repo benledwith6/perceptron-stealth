@@ -31,11 +31,17 @@ export default function AnalyticsPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch("/api/analytics/summary")
+    const controller = new AbortController();
+    fetch("/api/analytics/summary", { signal: controller.signal })
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => { if (d) setSummary(d); })
-      .catch(() => {})
+      .catch((err) => {
+        if (err.name !== "AbortError") {
+          console.error("Failed to fetch analytics:", err);
+        }
+      })
       .finally(() => setLoading(false));
+    return () => controller.abort();
   }, []);
 
   if (loading) {

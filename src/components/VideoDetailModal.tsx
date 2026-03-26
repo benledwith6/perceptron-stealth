@@ -114,6 +114,10 @@ export default function VideoDetailModal({
     return () => {
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = "";
+      // Ensure video stops on unmount
+      if (videoRef.current) {
+        videoRef.current.pause();
+      }
     };
   }, [handleClose]);
 

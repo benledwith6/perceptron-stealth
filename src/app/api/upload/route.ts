@@ -82,93 +82,93 @@ function extensionFromMime(mime: string): string {
 // ---------------------------------------------------------------------------
 
 export async function POST(req: NextRequest) {
-  const { error, user } = await requireAuth();
-  if (error) return error;
-
-  if (!isStorageConfigured()) {
-    return NextResponse.json(
-      {
-        error:
-          "File storage is not configured. Set S3_BUCKET, S3_ACCESS_KEY_ID, and S3_SECRET_ACCESS_KEY.",
-      },
-      { status: 503 }
-    );
-  }
-
-  // Parse multipart form data
-  let formData: FormData;
   try {
-    formData = await req.formData();
-  } catch {
-    return NextResponse.json(
-      { error: "Invalid multipart form data" },
-      { status: 400 }
-    );
-  }
+    const { error, user } = await requireAuth();
+    if (error) return error;
 
-  const file = formData.get("file") as File | null;
-  const category = (formData.get("type") as string) || "";
+    if (!isStorageConfigured()) {
+      return NextResponse.json(
+        {
+          error:
+            "File storage is not configured. Set S3_BUCKET, S3_ACCESS_KEY_ID, and S3_SECRET_ACCESS_KEY.",
+        },
+        { status: 503 }
+      );
+    }
 
-  if (!file) {
-    return NextResponse.json(
-      { error: 'Missing "file" field in form data' },
-      { status: 400 }
-    );
-  }
+    // Parse multipart form data
+    let formData: FormData;
+    try {
+      formData = await req.formData();
+    } catch {
+      return NextResponse.json(
+        { error: "Invalid multipart form data" },
+        { status: 400 }
+      );
+    }
 
-  if (!["photo", "voice", "video"].includes(category)) {
-    return NextResponse.json(
-      { error: 'Invalid "type" — must be "photo", "voice", or "video"' },
-      { status: 400 }
-    );
-  }
+    const file = formData.get("file") as File | null;
+    const category = (formData.get("type") as string) || "";
 
-  const fileCategory = category as FileCategory;
-  const contentType = file.type || "application/octet-stream";
+    if (!file) {
+      return NextResponse.json(
+        { error: 'Missing "file" field in form data' },
+        { status: 400 }
+      );
+    }
 
-  // Validate MIME type
-  if (!ALLOWED_TYPES[fileCategory].includes(contentType)) {
-    return NextResponse.json(
-      {
-        error: `File type "${contentType}" is not allowed for ${fileCategory} uploads. Allowed: ${ALLOWED_TYPES[fileCategory].join(", ")}`,
-      },
-      { status: 400 }
-    );
-  }
+    if (!["photo", "voice", "video"].includes(category)) {
+      return NextResponse.json(
+        { error: 'Invalid "type" — must be "photo", "voice", or "video"' },
+        { status: 400 }
+      );
+    }
 
-  // Validate size
-  if (file.size > MAX_SIZE[fileCategory]) {
-    const maxMB = MAX_SIZE[fileCategory] / (1024 * 1024);
-    return NextResponse.json(
-      {
-        error: `File is too large (${(file.size / (1024 * 1024)).toFixed(1)} MB). Maximum for ${fileCategory}: ${maxMB} MB`,
-      },
-      { status: 400 }
-    );
-  }
+    const fileCategory = category as FileCategory;
+    const contentType = file.type || "application/octet-stream";
 
-  // Read file into buffer
-  const arrayBuffer = await file.arrayBuffer();
-  const buffer = Buffer.from(arrayBuffer);
+    // Validate MIME type
+    if (!ALLOWED_TYPES[fileCategory].includes(contentType)) {
+      return NextResponse.json(
+        {
+          error: `File type "${contentType}" is not allowed for ${fileCategory} uploads. Allowed: ${ALLOWED_TYPES[fileCategory].join(", ")}`,
+        },
+        { status: 400 }
+      );
+    }
 
-  // Build the S3 key
-  const fileId = uuidv4();
-  const ext = extensionFromMime(contentType);
-  let key: string;
+    // Validate size
+    if (file.size > MAX_SIZE[fileCategory]) {
+      const maxMB = MAX_SIZE[fileCategory] / (1024 * 1024);
+      return NextResponse.json(
+        {
+          error: `File is too large (${(file.size / (1024 * 1024)).toFixed(1)} MB). Maximum for ${fileCategory}: ${maxMB} MB`,
+        },
+        { status: 400 }
+      );
+    }
 
-  switch (fileCategory) {
-    case "photo":
-      key = photoKey(user.id, fileId, ext);
-      break;
-    case "voice":
-      key = voiceKey(user.id, fileId, ext);
-      break;
-    case "video":
-      key = videoKey(user.id, fileId, ext);
-      break;
-  }
+    // Read file into buffer
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
 
-  try {
+    // Build the S3 key
+    const fileId = uuidv4();
+    const ext = extensionFromMime(contentType);
+    let key: string;
+
+    switch (fileCategory) {
+      case "photo":
+        key = photoKey(user.id, fileId, ext);
+        break;
+      case "voice":
+        key = voiceKey(user.id, fileId, ext);
+        break;
+      case "video":
+        key = videoKey(user.id, fileId, ext);
+        break;
+    }
+
     const url = await uploadFile(buffer, key, contentType);
     const filename = file.name || `${fileId}.${ext}`;
 
@@ -201,12 +201,9 @@ export async function POST(req: NextRequest) {
       key,
       filename,
       recordId: record?.id,
-    });
+    }, { status: 201 });
   } catch (err) {
-    console.error("[Upload] Upload failed:", err);
-    return NextResponse.json(
-      { error: "Upload failed. Please try again." },
-      { status: 500 }
-    );
+    console.error("[POST /api/upload] Unexpected error:", err);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }

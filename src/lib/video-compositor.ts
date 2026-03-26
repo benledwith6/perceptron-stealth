@@ -335,22 +335,23 @@ export async function expandCutPrompts(
   model: string,
   industry?: string
 ): Promise<CompositionPlan> {
-  const expandedCuts = await Promise.all(
-    plan.format.cuts.map(async (cut) => {
-      try {
-        const expanded = await expandPrompt({
-          userRequest: `${cut.prompt}\n\nCAMERA FOR THIS CUT: ${cut.camera}\nAUDIO FOR THIS CUT: ${cut.audio}\nEDITORIAL NOTE: ${cut.notes}`,
-          model,
-          userId,
-          industry,
-          duration: cut.generateDuration,
-        });
-        return { ...cut, prompt: expanded.expandedPrompt };
-      } catch {
-        return cut;
-      }
-    })
-  );
+  // Process cuts sequentially to avoid Gemini API rate limiting.
+  // Parallel Promise.all with 4-8 concurrent calls consistently triggers 429s.
+  const expandedCuts: typeof plan.format.cuts = [];
+  for (const cut of plan.format.cuts) {
+    try {
+      const expanded = await expandPrompt({
+        userRequest: `${cut.prompt}\n\nCAMERA FOR THIS CUT: ${cut.camera}\nAUDIO FOR THIS CUT: ${cut.audio}\nEDITORIAL NOTE: ${cut.notes}`,
+        model,
+        userId,
+        industry,
+        duration: cut.generateDuration,
+      });
+      expandedCuts.push({ ...cut, prompt: expanded.expandedPrompt });
+    } catch {
+      expandedCuts.push(cut);
+    }
+  }
 
   return {
     ...plan,

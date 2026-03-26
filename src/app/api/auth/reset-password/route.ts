@@ -2,15 +2,24 @@ import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import prisma from "@/lib/prisma";
 import { authLimiter, RateLimitError } from "@/lib/rate-limit";
+import { z } from "zod";
+
+const resetPasswordSchema = z.object({
+  email: z.string().email("Invalid email address"),
+  currentPassword: z.string().min(1, "Current password is required"),
+  password: z
+    .string()
+    .min(8, "Password must be at least 8 characters")
+    .regex(/[A-Z]/, "Password must contain at least one uppercase letter")
+    .regex(/[0-9]/, "Password must contain at least one number"),
+});
 
 /**
  * POST /api/auth/reset-password
  *
- * Direct password reset without email verification.
- * Accepts { email, password } and updates the user's password.
- *
- * This is a simplified flow for beta/internal use since email
- * functionality has been removed from the platform.
+ * Password reset that requires the user's current password for verification.
+ * Accepts { email, currentPassword, password } and updates the user's password
+ * only if the current password is correct.
  */
 export async function POST(req: NextRequest) {
   try {
@@ -20,7 +29,7 @@ export async function POST(req: NextRequest) {
       req.headers.get("x-real-ip") ||
       "unknown";
     try {
-      await authLimiter.check(5, ip);
+      await authLimiter.check(3, ip);
     } catch (err) {
       if (err instanceof RateLimitError) {
         return NextResponse.json(
@@ -28,6 +37,7 @@ export async function POST(req: NextRequest) {
           { status: 429, headers: { "Retry-After": String(err.retryAfter) } }
         );
       }
+      throw err;
     }
 
     let body: unknown;
@@ -40,34 +50,53 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { email, password } = body as { email?: string; password?: string };
-
-    if (!email || !password) {
+    const parsed = resetPasswordSchema.safeParse(body);
+    if (!parsed.success) {
+      const fieldErrors = parsed.error.flatten().fieldErrors;
+      const firstError =
+        Object.values(fieldErrors).flat()[0] || "Invalid input";
       return NextResponse.json(
-        { error: "Email and password are required" },
+        { error: firstError, fieldErrors },
         { status: 400 }
       );
     }
 
-    if (password.length < 8) {
+    const { email, currentPassword, password } = parsed.data;
+    const normalizedEmail = email.toLowerCase().trim();
+
+    // Prevent setting the same password
+    if (currentPassword === password) {
       return NextResponse.json(
-        { error: "Password must be at least 8 characters" },
+        { error: "New password must be different from your current password" },
         { status: 400 }
       );
     }
 
     // Look up the user by email
     const user = await prisma.user.findUnique({
-      where: { email: email.toLowerCase().trim() },
+      where: { email: normalizedEmail },
     });
 
     if (!user) {
-      // Return a generic message to avoid leaking whether the email exists
-      return NextResponse.json(
-        { error: "If an account exists for that email, the password has been reset." },
-        // Still return 200 to not reveal account existence
-        { status: 200 }
-      );
+      // Use consistent response shape and timing to avoid leaking account existence.
+      // Hash a dummy password to keep timing consistent with the success path.
+      await bcrypt.hash("dummy-timing-equalization", 12);
+      return NextResponse.json({
+        message:
+          "If an account exists for that email and the current password is correct, the password has been reset.",
+      });
+    }
+
+    // Verify the current password
+    const isCurrentValid = await bcrypt.compare(
+      currentPassword,
+      user.passwordHash
+    );
+    if (!isCurrentValid) {
+      return NextResponse.json({
+        message:
+          "If an account exists for that email and the current password is correct, the password has been reset.",
+      });
     }
 
     // Hash the new password
@@ -80,7 +109,8 @@ export async function POST(req: NextRequest) {
     });
 
     return NextResponse.json({
-      message: "Password has been reset successfully.",
+      message:
+        "If an account exists for that email and the current password is correct, the password has been reset.",
     });
   } catch (error) {
     console.error("[POST /api/auth/reset-password] Unexpected error:", error);

@@ -30,6 +30,8 @@ function LoginForm() {
       setLoading(false);
     } else {
       router.push("/dashboard/overview");
+      // Keep loading true during navigation; reset as fallback if push doesn't navigate
+      setTimeout(() => setLoading(false), 5000);
     }
   };
 

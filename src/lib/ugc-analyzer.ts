@@ -132,14 +132,16 @@ export async function analyzeVideo(
  */
 export async function saveToPromptLibrary(
   name: string,
-  analysis: VideoAnalysis
+  analysis: VideoAnalysis,
+  userId: string
 ): Promise<void> {
-  const key = `prompt_library_${Date.now()}`;
+  const key = `prompt_library_${userId}_${Date.now()}`;
   await prisma.systemConfig.create({
     data: {
       key,
       value: JSON.stringify({
         name,
+        userId,
         hook: analysis.hook,
         hookType: analysis.hookType,
         promptTemplate: analysis.promptTemplate,
@@ -155,9 +157,12 @@ export async function saveToPromptLibrary(
 /**
  * Get all saved prompt templates from the library.
  */
-export async function getPromptLibrary(): Promise<any[]> {
+export async function getPromptLibrary(userId: string): Promise<any[]> {
   const configs = await prisma.systemConfig.findMany({
-    where: { category: "prompt_library" },
+    where: {
+      category: "prompt_library",
+      key: { startsWith: `prompt_library_${userId}_` },
+    },
     orderBy: { updatedAt: "desc" },
   });
 

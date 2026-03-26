@@ -1,6 +1,18 @@
 const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
 const appName = "Official AI";
 
+/**
+ * Escape HTML special characters to prevent XSS in email templates.
+ */
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function layout(content: string): string {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -53,11 +65,13 @@ function layout(content: string): string {
 }
 
 function button(text: string, url: string): string {
+  const safeUrl = escapeHtml(url);
+  const safeText = escapeHtml(text);
   return `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:28px 0;">
   <tr>
     <td style="background:linear-gradient(135deg,#3b82f6,#9333ea);border-radius:10px;padding:14px 32px;">
-      <a href="${url}" target="_blank" style="color:#ffffff;font-size:14px;font-weight:600;text-decoration:none;display:inline-block;">
-        ${text}
+      <a href="${safeUrl}" target="_blank" style="color:#ffffff;font-size:14px;font-weight:600;text-decoration:none;display:inline-block;">
+        ${safeText}
       </a>
     </td>
   </tr>
@@ -67,9 +81,10 @@ function button(text: string, url: string): string {
 // --- Welcome Email ---
 
 export function welcomeEmailHtml(firstName: string): string {
+  const safeName = escapeHtml(firstName);
   return layout(`
     <h1 style="margin:0 0 16px;font-size:24px;font-weight:700;color:#ffffff;">
-      Welcome to ${appName}, ${firstName}!
+      Welcome to ${appName}, ${safeName}!
     </h1>
     <p style="margin:0 0 12px;font-size:15px;color:rgba(255,255,255,0.55);line-height:1.7;">
       Your account has been created. You now have access to AI-powered video content creation, automated scheduling, and personalized marketing tools.
@@ -111,13 +126,14 @@ Need help getting started? Reply to this email and our team will be happy to ass
 // --- Password Reset Email ---
 
 export function passwordResetEmailHtml(firstName: string, resetToken: string): string {
-  const resetUrl = `${baseUrl}/auth/reset-password?token=${resetToken}`;
+  const safeName = escapeHtml(firstName);
+  const resetUrl = `${baseUrl}/auth/reset-password?token=${encodeURIComponent(resetToken)}`;
   return layout(`
     <h1 style="margin:0 0 16px;font-size:24px;font-weight:700;color:#ffffff;">
       Reset your password
     </h1>
     <p style="margin:0 0 12px;font-size:15px;color:rgba(255,255,255,0.55);line-height:1.7;">
-      Hi ${firstName}, we received a request to reset your password. Click the button below to choose a new one. This link is valid for 1 hour.
+      Hi ${safeName}, we received a request to reset your password. Click the button below to choose a new one. This link is valid for 1 hour.
     </p>
     ${button("Reset Password", resetUrl)}
     <p style="margin:0 0 8px;font-size:13px;color:rgba(255,255,255,0.3);line-height:1.6;">
@@ -130,7 +146,7 @@ export function passwordResetEmailHtml(firstName: string, resetToken: string): s
 }
 
 export function passwordResetEmailText(firstName: string, resetToken: string): string {
-  const resetUrl = `${baseUrl}/auth/reset-password?token=${resetToken}`;
+  const resetUrl = `${baseUrl}/auth/reset-password?token=${encodeURIComponent(resetToken)}`;
   return `Reset your password
 
 Hi ${firstName}, we received a request to reset your password. Visit the link below to choose a new one. This link is valid for 1 hour.
@@ -145,13 +161,14 @@ If you did not request a password reset, you can safely ignore this email. Your 
 // --- Email Verification Email ---
 
 export function emailVerificationEmailHtml(firstName: string, verificationToken: string): string {
-  const verifyUrl = `${baseUrl}/api/auth/verify-email?token=${verificationToken}`;
+  const safeName = escapeHtml(firstName);
+  const verifyUrl = `${baseUrl}/api/auth/verify-email?token=${encodeURIComponent(verificationToken)}`;
   return layout(`
     <h1 style="margin:0 0 16px;font-size:24px;font-weight:700;color:#ffffff;">
       Verify your email address
     </h1>
     <p style="margin:0 0 12px;font-size:15px;color:rgba(255,255,255,0.55);line-height:1.7;">
-      Hi ${firstName}, please confirm your email address by clicking the button below. This helps us keep your account secure.
+      Hi ${safeName}, please confirm your email address by clicking the button below. This helps us keep your account secure.
     </p>
     ${button("Verify Email", verifyUrl)}
     <p style="margin:0 0 8px;font-size:13px;color:rgba(255,255,255,0.3);line-height:1.6;">
@@ -164,7 +181,7 @@ export function emailVerificationEmailHtml(firstName: string, verificationToken:
 }
 
 export function emailVerificationEmailText(firstName: string, verificationToken: string): string {
-  const verifyUrl = `${baseUrl}/api/auth/verify-email?token=${verificationToken}`;
+  const verifyUrl = `${baseUrl}/api/auth/verify-email?token=${encodeURIComponent(verificationToken)}`;
   return `Verify your email address
 
 Hi ${firstName}, please confirm your email address by visiting the link below. This helps us keep your account secure.

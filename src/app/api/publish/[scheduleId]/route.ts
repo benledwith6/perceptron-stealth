@@ -66,20 +66,36 @@ export async function POST(
     }
 
     // 3. Upload and publish
-    const mediaId = await uploadMedia(
-      schedule.video.videoUrl,
-      `${schedule.video.title.replace(/[^a-zA-Z0-9]/g, "_")}.mp4`
-    );
+    let mediaId: string;
+    try {
+      mediaId = await uploadMedia(
+        schedule.video.videoUrl,
+        `${schedule.video.title.replace(/[^a-zA-Z0-9]/g, "_")}.mp4`
+      );
+    } catch (err: any) {
+      return NextResponse.json(
+        { error: `Failed to upload video to Post Bridge: ${err.message}` },
+        { status: 502 }
+      );
+    }
 
     const caption = [schedule.video.title, schedule.video.description]
       .filter(Boolean)
       .join("\n\n");
 
-    const pbPost = await createPost({
-      caption,
-      socialAccountIds: [pbAccounts[0].id],
-      mediaIds: [mediaId],
-    });
+    let pbPost;
+    try {
+      pbPost = await createPost({
+        caption,
+        socialAccountIds: [pbAccounts[0].id],
+        mediaIds: [mediaId],
+      });
+    } catch (err: any) {
+      return NextResponse.json(
+        { error: `Failed to create post on Post Bridge: ${err.message}` },
+        { status: 502 }
+      );
+    }
 
     // 4. Update schedule and video status
     await prisma.schedule.update({

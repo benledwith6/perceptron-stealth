@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api-helpers";
+import { requireAdmin } from "@/lib/api-helpers";
 import { getAllConfigs, setConfig, seedDefaultConfigs, clearConfigCache } from "@/lib/system-config";
 
 export async function GET(req: NextRequest) {
   try {
-    const { error } = await requireAuth();
+    const { error } = await requireAdmin();
     if (error) return error;
 
     // Seed defaults if this is the first time
@@ -25,7 +25,7 @@ export async function GET(req: NextRequest) {
 
 export async function PATCH(req: NextRequest) {
   try {
-    const { error } = await requireAuth();
+    const { error } = await requireAdmin();
     if (error) return error;
 
     let body: { key: string; value: string };

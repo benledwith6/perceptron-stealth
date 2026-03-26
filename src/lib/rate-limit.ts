@@ -52,6 +52,10 @@ class RateLimiter {
    * @throws RateLimitError if the rate limit is exceeded
    */
   async check(limit: number, token: string): Promise<void> {
+    if (!token) {
+      throw new Error("Rate limiter token must not be empty");
+    }
+
     const now = Date.now();
     const windowStart = now - this.interval;
 
@@ -127,6 +131,10 @@ export function rateLimit(options: RateLimiterOptions): RateLimiter {
 }
 
 // ─── Pre-configured limiters ─────────────────────────────────────
+// NOTE: These are in-memory limiters. In a multi-instance/serverless
+// deployment, rate limits are per-instance and can be bypassed by
+// requests hitting different instances. For production use, consider
+// a shared store (Redis, Upstash, etc.) for accurate rate limiting.
 
 /** Auth endpoints: 5 requests per minute per IP */
 export const authLimiter = rateLimit({

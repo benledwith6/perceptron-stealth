@@ -38,6 +38,13 @@ export default function VideoModal({
     return () => {
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = "";
+      // Ensure audio/video stop on unmount
+      if (audioRef.current) {
+        audioRef.current.pause();
+      }
+      if (videoRef.current) {
+        videoRef.current.pause();
+      }
     };
   }, [handleClose]);
 

@@ -174,7 +174,7 @@ export async function exchangeCodeForToken(
   let headers: Record<string, string> = {};
 
   if (platform === "tiktok") {
-    // TikTok uses JSON body
+    // TikTok v2 API expects application/x-www-form-urlencoded
     headers["Content-Type"] = "application/x-www-form-urlencoded";
     body = new URLSearchParams({
       client_key: config.clientId,
@@ -182,6 +182,7 @@ export async function exchangeCodeForToken(
       code,
       grant_type: "authorization_code",
       redirect_uri: config.redirectUri,
+      code_verifier: "", // Required by TikTok v2 even if not using PKCE
     });
   } else if (platform === "instagram") {
     headers["Content-Type"] = "application/x-www-form-urlencoded";
@@ -216,8 +217,30 @@ export async function exchangeCodeForToken(
 
   const data = await response.json();
 
+  // TikTok v2 may return HTTP 200 but with an error in the response body
+  if (platform === "tiktok" && data.error?.code) {
+    throw new Error(`Token exchange failed for tiktok: ${data.error.code} ${data.error.message || "Unknown error"}`);
+  }
+
   // Normalize the response across platforms
-  const tokenResponse = normalizeTokenResponse(platform, data);
+  let tokenResponse = normalizeTokenResponse(platform, data);
+
+  // Instagram: Exchange short-lived token (1 hour) for long-lived token (60 days)
+  if (platform === "instagram" && tokenResponse.accessToken) {
+    try {
+      const llRes = await fetch(
+        `https://graph.instagram.com/access_token?grant_type=ig_exchange_token&client_secret=${config.clientSecret}&access_token=${tokenResponse.accessToken}`
+      );
+      if (llRes.ok) {
+        const llData = await llRes.json();
+        tokenResponse.accessToken = llData.access_token;
+        tokenResponse.expiresIn = llData.expires_in || 5184000; // 60 days
+      }
+    } catch (err) {
+      console.error("Instagram long-lived token exchange failed:", err);
+      // Continue with short-lived token rather than failing entirely
+    }
+  }
 
   // Fetch user profile info to get handle / account ID
   const profile = await fetchUserProfile(platform, tokenResponse.accessToken);
@@ -238,6 +261,47 @@ export async function refreshAccessToken(
 
   if (!config.clientId || !config.clientSecret) {
     throw new Error(`Missing OAuth credentials for ${platform}`);
+  }
+
+  // Instagram uses a different endpoint and mechanism for refreshing long-lived tokens
+  if (platform === "instagram") {
+    const res = await fetch(
+      `https://graph.instagram.com/refresh_access_token?grant_type=ig_refresh_token&access_token=${refreshToken}`
+    );
+    if (!res.ok) {
+      const errorText = await res.text();
+      throw new Error(`Token refresh failed for instagram: ${res.status} ${errorText}`);
+    }
+    const data = await res.json();
+    return {
+      accessToken: data.access_token,
+      refreshToken: null, // Instagram long-lived tokens are refreshed in-place
+      expiresIn: data.expires_in || 5184000,
+      scope: null,
+      accountId: null,
+      handle: null,
+    };
+  }
+
+  // Facebook long-lived tokens cannot be refreshed with a refresh_token grant;
+  // they need to be exchanged for a new long-lived token using the existing token
+  if (platform === "facebook") {
+    const res = await fetch(
+      `https://graph.facebook.com/v19.0/oauth/access_token?grant_type=fb_exchange_token&client_id=${config.clientId}&client_secret=${config.clientSecret}&fb_exchange_token=${refreshToken}`
+    );
+    if (!res.ok) {
+      const errorText = await res.text();
+      throw new Error(`Token refresh failed for facebook: ${res.status} ${errorText}`);
+    }
+    const data = await res.json();
+    return {
+      accessToken: data.access_token,
+      refreshToken: null,
+      expiresIn: data.expires_in || 5184000,
+      scope: null,
+      accountId: null,
+      handle: null,
+    };
   }
 
   let body: URLSearchParams;
@@ -273,10 +337,19 @@ export async function refreshAccessToken(
   }
 
   const data = await response.json();
+
+  // TikTok v2 may return 200 with an error code in the body
+  if (platform === "tiktok" && data.error?.code) {
+    throw new Error(`Token refresh failed for tiktok: ${data.error.code} ${data.error.message}`);
+  }
+
   return normalizeTokenResponse(platform, data);
 }
 
-function normalizeTokenResponse(platform: SocialPlatform, data: any): TokenResponse {
+function normalizeTokenResponse(platform: SocialPlatform, rawData: any): TokenResponse {
+  // TikTok v2 API nests token fields under a "data" key
+  const data = platform === "tiktok" && rawData.data ? rawData.data : rawData;
+
   switch (platform) {
     case "instagram":
       return {
@@ -349,8 +422,10 @@ async function fetchUserProfile(platform: SocialPlatform, accessToken: string): 
   try {
     switch (platform) {
       case "instagram": {
+        // Use Authorization header instead of query param to avoid leaking token in logs/referrers
         const res = await fetch(
-          `https://graph.instagram.com/me?fields=id,username&access_token=${accessToken}`
+          "https://graph.instagram.com/me?fields=id,username",
+          { headers: { Authorization: `Bearer ${accessToken}` } }
         );
         if (res.ok) {
           const data = await res.json();
@@ -406,8 +481,10 @@ async function fetchUserProfile(platform: SocialPlatform, accessToken: string): 
       }
 
       case "facebook": {
+        // Use Authorization header instead of query param to avoid leaking token in logs/referrers
         const res = await fetch(
-          `https://graph.facebook.com/me?fields=id,name&access_token=${accessToken}`
+          "https://graph.facebook.com/me?fields=id,name",
+          { headers: { Authorization: `Bearer ${accessToken}` } }
         );
         if (res.ok) {
           const data = await res.json();

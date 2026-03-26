@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { Save, RefreshCw, Settings2, MessageSquare, Sparkles } from "lucide-react";
 
 interface ConfigRow {
@@ -38,25 +38,29 @@ export default function AdminPage() {
   const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => {
-    loadConfigs();
+    const controller = new AbortController();
+    loadConfigs(controller.signal);
+    return () => controller.abort();
   }, []);
 
-  async function loadConfigs() {
+  async function loadConfigs(signal?: AbortSignal) {
     setLoading(true);
     try {
-      const res = await fetch("/api/admin/config");
+      const res = await fetch("/api/admin/config", { signal });
       if (res.ok) {
         const data = await res.json();
-        setConfigs(data);
+        setConfigs(Array.isArray(data) ? data : []);
         // Initialize edited values
         const values: Record<string, string> = {};
-        data.forEach((c: ConfigRow) => {
+        (Array.isArray(data) ? data : []).forEach((c: ConfigRow) => {
           values[c.key] = c.value;
         });
         setEditedValues(values);
       }
-    } catch (err) {
-      console.error("Failed to load configs:", err);
+    } catch (err: any) {
+      if (err?.name !== "AbortError") {
+        console.error("Failed to load configs:", err);
+      }
     } finally {
       setLoading(false);
     }
@@ -88,10 +92,15 @@ export default function AdminPage() {
     }
   }
 
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout>>(null);
   function showToast(msg: string) {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     setToast(msg);
-    setTimeout(() => setToast(null), 2000);
+    toastTimerRef.current = setTimeout(() => setToast(null), 2000);
   }
+  useEffect(() => {
+    return () => { if (toastTimerRef.current) clearTimeout(toastTimerRef.current); };
+  }, []);
 
   function isChanged(key: string) {
     const original = configs.find((c) => c.key === key);

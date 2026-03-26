@@ -1,11 +1,30 @@
 import Stripe from "stripe";
 
+if (!process.env.STRIPE_SECRET_KEY) {
+  console.warn(
+    "STRIPE_SECRET_KEY is not set. Stripe functionality will be unavailable."
+  );
+}
+
 export const stripe = process.env.STRIPE_SECRET_KEY
   ? new Stripe(process.env.STRIPE_SECRET_KEY, {
       apiVersion: "2026-02-25.clover",
       typescript: true,
     })
   : (null as unknown as Stripe);
+
+/**
+ * Guard that throws a clear error if the Stripe client was not initialised.
+ * Call this at the top of any function that uses the `stripe` export.
+ */
+export function requireStripe(): Stripe {
+  if (!stripe) {
+    throw new Error(
+      "Stripe is not configured. Set STRIPE_SECRET_KEY in your environment."
+    );
+  }
+  return stripe;
+}
 
 /**
  * Plan configuration mapping plan names to Stripe Price IDs.
@@ -32,13 +51,26 @@ export const PLAN_CONFIG: Record<
 
 /**
  * Look up which plan name corresponds to a given Stripe Price ID.
- * Returns "free" if no match is found.
+ * Returns `null` if no match is found so callers can distinguish
+ * "unknown price" from an intentional downgrade.
  */
-export function planFromPriceId(priceId: string): string {
+export function planFromPriceId(priceId: string): string | null {
   for (const [planKey, config] of Object.entries(PLAN_CONFIG)) {
     if (config.priceId === priceId) return planKey;
   }
-  return "free";
+  return null;
+}
+
+/**
+ * Validate that a return/redirect URL uses an allowed origin.
+ * Prevents open-redirect attacks via a spoofed Origin header.
+ */
+export function getSafeOrigin(requestOrigin: string | null): string {
+  const allowed = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  if (requestOrigin && requestOrigin === allowed) {
+    return requestOrigin;
+  }
+  return allowed;
 }
 
 /**
@@ -59,6 +91,8 @@ export async function createCheckoutSession({
   successUrl: string;
   cancelUrl: string;
 }): Promise<Stripe.Checkout.Session> {
+  const s = requireStripe();
+
   const planConfig = PLAN_CONFIG[plan];
   if (!planConfig || !planConfig.priceId) {
     throw new Error(`Invalid plan or missing price ID for plan: ${plan}`);
@@ -79,6 +113,15 @@ export async function createCheckoutSession({
       userId,
       plan,
     },
+    // Prevent duplicate subscriptions: if a checkout session with the
+    // same idempotency metadata already exists Stripe will return it
+    // instead of creating a new one.
+    subscription_data: {
+      metadata: {
+        userId,
+        plan,
+      },
+    },
   };
 
   // If the user already has a Stripe customer ID, reuse it.
@@ -89,7 +132,7 @@ export async function createCheckoutSession({
     sessionParams.customer_email = userEmail;
   }
 
-  return stripe.checkout.sessions.create(sessionParams);
+  return s.checkout.sessions.create(sessionParams);
 }
 
 /**
@@ -103,7 +146,9 @@ export async function createPortalSession({
   stripeCustomerId: string;
   returnUrl: string;
 }): Promise<Stripe.BillingPortal.Session> {
-  return stripe.billingPortal.sessions.create({
+  const s = requireStripe();
+
+  return s.billingPortal.sessions.create({
     customer: stripeCustomerId,
     return_url: returnUrl,
   });

@@ -2,6 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api-helpers";
 import { isValidPlatform, exchangeCodeForToken } from "@/lib/social-oauth";
 import prisma from "@/lib/prisma";
+import crypto from "crypto";
+
+/**
+ * Timing-safe string comparison to prevent timing attacks on state parameter.
+ */
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+}
 
 export async function GET(
   req: NextRequest,
@@ -23,15 +32,18 @@ export async function GET(
   const settingsUrl = new URL("/dashboard/settings", req.url);
   settingsUrl.searchParams.set("tab", "social");
 
-  // Handle OAuth errors from the provider
-  if (oauthError) {
-    const errorDesc = searchParams.get("error_description") || oauthError;
-    settingsUrl.searchParams.set("error", `${platform} authorization failed: ${errorDesc}`);
+  // Validate platform FIRST before any other processing to avoid
+  // using unsanitized platform names in cookie lookups or error messages
+  if (!isValidPlatform(platform)) {
+    settingsUrl.searchParams.set("error", "Invalid platform");
     return NextResponse.redirect(settingsUrl);
   }
 
-  if (!isValidPlatform(platform)) {
-    settingsUrl.searchParams.set("error", `Invalid platform: ${platform}`);
+  // Handle OAuth errors from the provider — do NOT leak provider error details
+  // to the redirect URL (could be used for phishing or information disclosure)
+  if (oauthError) {
+    console.error(`OAuth error from ${platform}:`, searchParams.get("error_description") || oauthError);
+    settingsUrl.searchParams.set("error", `${platform} authorization failed. Please try again.`);
     return NextResponse.redirect(settingsUrl);
   }
 
@@ -42,7 +54,7 @@ export async function GET(
 
   // Verify state parameter for CSRF protection
   const storedState = req.cookies.get(`oauth_state_${platform}`)?.value;
-  if (!storedState || storedState !== state) {
+  if (!state || !storedState || !timingSafeEqual(storedState, state)) {
     settingsUrl.searchParams.set("error", "Invalid OAuth state. Please try again.");
     return NextResponse.redirect(settingsUrl);
   }
@@ -95,9 +107,10 @@ export async function GET(
     return response;
   } catch (err: any) {
     console.error(`OAuth callback error for ${platform}:`, err);
+    // Do not leak internal error details to the redirect URL
     settingsUrl.searchParams.set(
       "error",
-      `Failed to connect ${platform}: ${err.message || "Unknown error"}`
+      `Failed to connect ${platform}. Please try again.`
     );
     return NextResponse.redirect(settingsUrl);
   }

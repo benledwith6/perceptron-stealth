@@ -1,15 +1,8 @@
 import { getServerSession } from "next-auth";
 import { NextResponse } from "next/server";
 import { authOptions } from "./auth";
-import prisma from "./prisma";
-
-const DEV_BYPASS_AUTH = process.env.NODE_ENV !== "production";
 
 export async function getSession() {
-  if (DEV_BYPASS_AUTH) {
-    const devUser = await getOrCreateDevUser();
-    return { user: devUser };
-  }
   return getServerSession(authOptions);
 }
 
@@ -21,31 +14,22 @@ export async function requireAuth() {
   return { error: null, user: session.user as any };
 }
 
-async function getOrCreateDevUser() {
-  const email = "dev@officialai.local";
-  let user = await prisma.user.findUnique({ where: { email } });
-  if (!user) {
-    user = await prisma.user.create({
-      data: {
-        email,
-        passwordHash: "dev-bypass",
-        firstName: "Dev",
-        lastName: "User",
-        industry: "technology",
-        plan: "authority",
-        onboarded: true,
-        emailVerified: true,
-      },
-    });
+/**
+ * Require that the authenticated user has an admin role.
+ * Returns the same shape as requireAuth() but with an additional admin check.
+ */
+export async function requireAdmin() {
+  const session = await getSession();
+  if (!session?.user) {
+    return { error: NextResponse.json({ error: "Unauthorized" }, { status: 401 }), user: null };
   }
-  return {
-    id: user.id,
-    email: user.email,
-    name: `${user.firstName} ${user.lastName}`,
-    industry: user.industry,
-    plan: user.plan,
-    onboarded: user.onboarded,
-  };
+
+  const user = session.user as any;
+  if (user.role !== "admin") {
+    return { error: NextResponse.json({ error: "Forbidden" }, { status: 403 }), user: null };
+  }
+
+  return { error: null, user };
 }
 
 export function jsonResponse(data: any, status = 200) {

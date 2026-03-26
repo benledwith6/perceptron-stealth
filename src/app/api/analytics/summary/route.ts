@@ -7,16 +7,20 @@ export async function GET() {
     const { error, user } = await requireAuth();
     if (error) return error;
 
-    const [totalVideos, publishedVideos, events] = await Promise.all([
+    const [totalVideos, publishedVideos, eventGroups] = await Promise.all([
       prisma.video.count({ where: { userId: user.id } }),
       prisma.video.count({ where: { userId: user.id, status: "published" } }),
-      prisma.analyticsEvent.findMany({ where: { userId: user.id } }),
+      prisma.analyticsEvent.groupBy({
+        by: ["eventType"],
+        where: { userId: user.id },
+        _sum: { count: true },
+      }),
     ]);
 
-    // Aggregate events by type
+    // Build totals map from aggregated groups
     const totals: Record<string, number> = {};
-    for (const e of events) {
-      totals[e.eventType] = (totals[e.eventType] || 0) + e.count;
+    for (const g of eventGroups) {
+      totals[g.eventType] = g._sum.count || 0;
     }
 
     return NextResponse.json({
@@ -26,7 +30,6 @@ export async function GET() {
       totalLikes: totals.like || 0,
       totalShares: totals.share || 0,
       totalComments: totals.comment || 0,
-      events,
     });
   } catch (err) {
     console.error("[GET /api/analytics/summary]", err);

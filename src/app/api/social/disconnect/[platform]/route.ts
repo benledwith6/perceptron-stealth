@@ -20,31 +20,22 @@ export async function DELETE(
   }
 
   try {
-    // Find and delete the social account connection
-    const existing = await prisma.socialAccount.findUnique({
+    // Use deleteMany to atomically delete without a prior lookup,
+    // avoiding a race condition where another request could delete
+    // between a findUnique and delete call.
+    const result = await prisma.socialAccount.deleteMany({
       where: {
-        userId_platform: {
-          userId: user.id,
-          platform,
-        },
+        userId: user.id,
+        platform,
       },
     });
 
-    if (!existing) {
+    if (result.count === 0) {
       return NextResponse.json(
         { error: `No ${platform} account connected` },
         { status: 404 }
       );
     }
-
-    await prisma.socialAccount.delete({
-      where: {
-        userId_platform: {
-          userId: user.id,
-          platform,
-        },
-      },
-    });
 
     return NextResponse.json({ success: true, message: `${platform} disconnected` });
   } catch (err: any) {

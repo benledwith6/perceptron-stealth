@@ -25,73 +25,73 @@ function safeParseJson(str: string): Record<string, any> {
  * with the reason so the UI can display what went wrong.
  */
 export async function GET(req: NextRequest) {
-  const { error, user } = await requireAuth();
-  if (error) return error;
+  try {
+    const { error, user } = await requireAuth();
+    if (error) return error;
 
-  const videoId = req.nextUrl.searchParams.get("videoId");
-  if (!videoId) {
-    return NextResponse.json(
-      { error: "videoId query parameter is required" },
-      { status: 400 }
-    );
-  }
-
-  const video = await prisma.video.findFirst({
-    where: { id: videoId, userId: user.id },
-    select: {
-      id: true,
-      status: true,
-      videoUrl: true,
-      thumbnailUrl: true,
-      model: true,
-      title: true,
-      duration: true,
-      updatedAt: true,
-      sourceReview: true,
-    },
-  });
-
-  if (!video) {
-    return NextResponse.json({ error: "Video not found" }, { status: 404 });
-  }
-
-  // ─── Timeout detection ─────────────────────────────────────────
-  // If generating for more than 10 minutes, mark as failed automatically
-  if (video.status === "generating") {
-    const elapsed = Date.now() - new Date(video.updatedAt).getTime();
-    if (elapsed > GENERATION_TIMEOUT_MS) {
-      const timeoutError = "Generation timed out. Please try again.";
-      const meta = video.sourceReview ? safeParseJson(video.sourceReview) : {};
-      meta.error = timeoutError;
-
-      await prisma.video.update({
-        where: { id: videoId },
-        data: {
-          status: "failed",
-          sourceReview: JSON.stringify(meta),
-        },
-      });
-
-      const { sourceReview: _sr, ...videoData } = video;
-      return NextResponse.json({
-        video: { ...videoData, status: "failed", updatedAt: new Date() },
-        progress: { step: "failed", currentCut: 0, totalCuts: 0, percent: 0 },
-        error: timeoutError,
-      });
+    const videoId = req.nextUrl.searchParams.get("videoId");
+    if (!videoId) {
+      return NextResponse.json(
+        { error: "videoId query parameter is required" },
+        { status: 400 }
+      );
     }
-  }
 
-  // ─── Extract pipeline progress ─────────────────────────────────
-  let progress: {
-    step: string;
-    currentCut: number;
-    totalCuts: number;
-    percent: number;
-  } | null = null;
+    const video = await prisma.video.findFirst({
+      where: { id: videoId, userId: user.id },
+      select: {
+        id: true,
+        status: true,
+        videoUrl: true,
+        thumbnailUrl: true,
+        model: true,
+        title: true,
+        duration: true,
+        updatedAt: true,
+        sourceReview: true,
+      },
+    });
 
-  if (video.status === "generating" && video.sourceReview) {
-    try {
-      const meta = JSON.parse(video.sourceReview as string);
+    if (!video) {
+      return NextResponse.json({ error: "Video not found" }, { status: 404 });
+    }
+
+    // ─── Timeout detection ─────────────────────────────────────────
+    // If generating for more than 10 minutes, mark as failed automatically
+    if (video.status === "generating") {
+      const elapsed = Date.now() - new Date(video.updatedAt).getTime();
+      if (elapsed > GENERATION_TIMEOUT_MS) {
+        const timeoutError = "Generation timed out. Please try again.";
+        const meta = video.sourceReview ? safeParseJson(video.sourceReview) : {};
+        meta.error = timeoutError;
+
+        await prisma.video.update({
+          where: { id: videoId },
+          data: {
+            status: "failed",
+            sourceReview: JSON.stringify(meta),
+          },
+        });
+
+        const { sourceReview: _sr, ...videoData } = video;
+        return NextResponse.json({
+          video: { ...videoData, status: "failed", updatedAt: new Date() },
+          progress: { step: "failed", currentCut: 0, totalCuts: 0, percent: 0 },
+          error: timeoutError,
+        });
+      }
+    }
+
+    // ─── Extract pipeline progress ─────────────────────────────────
+    let progress: {
+      step: string;
+      currentCut: number;
+      totalCuts: number;
+      percent: number;
+    } | null = null;
+
+    if (video.status === "generating" && video.sourceReview) {
+      const meta = safeParseJson(video.sourceReview as string);
       const totalCuts = meta.cuts?.length || 0;
       const step: string = meta.pipelineStep || "queued";
       const currentCut: number = meta.pipelineCut ?? 0;
@@ -130,28 +130,29 @@ export async function GET(req: NextRequest) {
       }
 
       progress = { step, currentCut, totalCuts, percent };
-    } catch {
-      // Malformed JSON — ignore
+    } else if (video.status === "review" || video.status === "approved" || video.status === "published") {
+      progress = { step: "done", currentCut: 0, totalCuts: 0, percent: 100 };
+    } else if (video.status === "failed") {
+      progress = { step: "failed", currentCut: 0, totalCuts: 0, percent: 0 };
     }
-  } else if (video.status === "review" || video.status === "approved" || video.status === "published") {
-    progress = { step: "done", currentCut: 0, totalCuts: 0, percent: 100 };
-  } else if (video.status === "failed") {
-    progress = { step: "failed", currentCut: 0, totalCuts: 0, percent: 0 };
+
+    // ─── Extract error for failed videos ───────────────────────────
+    let errorMessage: string | undefined;
+    if (video.status === "failed" && video.sourceReview) {
+      const meta = safeParseJson(video.sourceReview);
+      errorMessage = meta.error || undefined;
+    }
+
+    // Return video without sourceReview (internal metadata, not for client)
+    const { sourceReview: _sr, ...videoData } = video;
+
+    return NextResponse.json({
+      video: videoData,
+      progress,
+      ...(errorMessage ? { error: errorMessage } : {}),
+    });
+  } catch (err) {
+    console.error("[GET /api/generate/status] Unexpected error:", err);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
-
-  // ─── Extract error for failed videos ───────────────────────────
-  let errorMessage: string | undefined;
-  if (video.status === "failed" && video.sourceReview) {
-    const meta = safeParseJson(video.sourceReview);
-    errorMessage = meta.error || undefined;
-  }
-
-  // Return video without sourceReview (internal metadata, not for client)
-  const { sourceReview: _sr, ...videoData } = video;
-
-  return NextResponse.json({
-    video: videoData,
-    progress,
-    ...(errorMessage ? { error: errorMessage } : {}),
-  });
 }

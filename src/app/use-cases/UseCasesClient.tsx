@@ -290,7 +290,7 @@ export default function UseCasesClient() {
                     <div className="mt-6 pt-5 border-t border-white/[0.04]">
                       <Link
                         href="/auth/signup"
-                        className="block text-center text-[13px] font-medium py-3 min-h-[44px] flex items-center justify-center rounded-lg bg-white text-[#050508] hover:bg-white/90 active:bg-white/80 transition-all"
+                        className="flex items-center justify-center text-center text-[13px] font-medium py-3 min-h-[44px] rounded-lg bg-white text-[#050508] hover:bg-white/90 active:bg-white/80 transition-all"
                       >
                         Try it for {uc.industry.toLowerCase()}
                       </Link>

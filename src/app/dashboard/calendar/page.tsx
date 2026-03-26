@@ -38,14 +38,25 @@ export default function CalendarPage() {
   const [loading, setLoading] = useState(true);
   const [currentDate, setCurrentDate] = useState(new Date());
 
-  useEffect(() => { fetchSchedules(); }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchSchedules(controller.signal);
+    return () => controller.abort();
+  }, []);
 
-  async function fetchSchedules() {
+  async function fetchSchedules(signal?: AbortSignal) {
     setLoading(true);
     try {
-      const res = await fetch("/api/schedule");
-      if (res.ok) setSchedules(await res.json());
-    } catch {} finally { setLoading(false); }
+      const res = await fetch("/api/schedule", { signal });
+      if (res.ok) {
+        const data = await res.json();
+        setSchedules(Array.isArray(data) ? data : []);
+      }
+    } catch (err: any) {
+      if (err?.name !== "AbortError") {
+        console.error("Failed to fetch schedules:", err);
+      }
+    } finally { setLoading(false); }
   }
 
   const year = currentDate.getFullYear();

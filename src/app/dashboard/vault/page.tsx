@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import {
   Camera,
   Mic,
@@ -27,18 +27,26 @@ export default function VaultPage() {
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
-  useEffect(() => { loadAll(); }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    loadAll(controller.signal);
+    return () => controller.abort();
+  }, []);
 
-  async function loadAll() {
+  async function loadAll(signal?: AbortSignal) {
     setLoading(true);
     try {
       const [pRes, vRes, bRes] = await Promise.all([
-        fetch("/api/photos"), fetch("/api/voices"), fetch("/api/brand-profile"),
+        fetch("/api/photos", { signal }), fetch("/api/voices", { signal }), fetch("/api/brand-profile", { signal }),
       ]);
-      if (pRes.ok) setPhotos(await pRes.json());
-      if (vRes.ok) setVoices(await vRes.json());
+      if (pRes.ok) { const data = await pRes.json(); setPhotos(Array.isArray(data) ? data : []); }
+      if (vRes.ok) { const data = await vRes.json(); setVoices(Array.isArray(data) ? data : []); }
       if (bRes.ok) { const d = await bRes.json(); if (d && !d.error) setBrand(d); }
-    } catch {} finally { setLoading(false); }
+    } catch (err: any) {
+      if (err?.name !== "AbortError") {
+        console.error("Failed to load vault data:", err);
+      }
+    } finally { setLoading(false); }
   }
 
   async function saveBrand() {
@@ -53,7 +61,15 @@ export default function VaultPage() {
     } catch {} finally { setSaving(false); }
   }
 
-  function showToast(msg: string) { setToast(msg); setTimeout(() => setToast(null), 2000); }
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout>>(null);
+  function showToast(msg: string) {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    setToast(msg);
+    toastTimerRef.current = setTimeout(() => setToast(null), 2000);
+  }
+  useEffect(() => {
+    return () => { if (toastTimerRef.current) clearTimeout(toastTimerRef.current); };
+  }, []);
 
   const tabs: { id: Tab; label: string; icon: any; count?: number }[] = [
     { id: "photos", label: "Photos", icon: Camera, count: photos.length },

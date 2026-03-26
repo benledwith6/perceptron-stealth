@@ -20,6 +20,7 @@ export async function POST(req: NextRequest) {
           { status: 429, headers: { "Retry-After": String(err.retryAfter) } }
         );
       }
+      throw err;
     }
 
     let body: unknown;
@@ -37,7 +38,8 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const { email, password, firstName, lastName, industry, company } = validation.data;
+    const { password, firstName, lastName, industry, company } = validation.data;
+    const email = validation.data.email.toLowerCase().trim();
 
     const existing = await prisma.user.findUnique({ where: { email } });
     if (existing) {

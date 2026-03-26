@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, errorResponse } from "@/lib/api-helpers";
-import { createCheckoutSession, PLAN_CONFIG } from "@/lib/stripe";
+import { createCheckoutSession, getSafeOrigin, PLAN_CONFIG } from "@/lib/stripe";
 import prisma from "@/lib/prisma";
 
 export async function POST(req: NextRequest) {
@@ -19,17 +19,27 @@ export async function POST(req: NextRequest) {
       return errorResponse(`Stripe price ID not configured for plan: ${plan}`, 500);
     }
 
-    // Fetch full user record to get stripeCustomerId
+    // Fetch full user record to get stripeCustomerId and current plan
     const dbUser = await prisma.user.findUnique({
       where: { id: user.id },
-      select: { email: true, stripeCustomerId: true },
+      select: { email: true, stripeCustomerId: true, stripeSubscriptionId: true, plan: true },
     });
 
     if (!dbUser) {
       return errorResponse("User not found", 404);
     }
 
-    const origin = req.headers.get("origin") || process.env.NEXTAUTH_URL || "http://localhost:3000";
+    // Prevent creating a second subscription if the user already has one.
+    // Direct them to the customer portal to change plans instead.
+    if (dbUser.stripeSubscriptionId) {
+      return errorResponse(
+        "You already have an active subscription. Use the billing portal to change plans.",
+        409
+      );
+    }
+
+    // Validate origin to prevent open-redirect attacks
+    const origin = getSafeOrigin(req.headers.get("origin"));
 
     const session = await createCheckoutSession({
       userId: user.id,

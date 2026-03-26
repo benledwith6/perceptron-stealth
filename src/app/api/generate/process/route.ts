@@ -80,11 +80,12 @@ export async function POST(req: NextRequest) {
     // Helper: update pipeline progress in sourceReview metadata.
     // Reads the latest metadata from DB to avoid overwriting concurrent updates.
     const updatePipelineProgress = async (pipelineStep: string, pipelineCut?: number) => {
+      if (!videoId) return; // guard against undefined videoId
       const fresh = await prisma.video.findUnique({
         where: { id: videoId },
         select: { sourceReview: true },
       });
-      const existing = fresh?.sourceReview ? JSON.parse(fresh.sourceReview as string) : {};
+      const existing = fresh?.sourceReview ? safeParseJson(fresh.sourceReview as string) : {};
       existing.pipelineStep = pipelineStep;
       if (pipelineCut !== undefined) existing.pipelineCut = pipelineCut;
       await prisma.video.update({
@@ -163,8 +164,13 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // Store TTS URL in metadata
-      const existing = video.sourceReview ? JSON.parse(video.sourceReview as string) : {};
+      // Store TTS URL in metadata — re-read from DB to avoid overwriting
+      // expand step's metadata (race condition: video.sourceReview is stale)
+      const freshVideo = await prisma.video.findUnique({
+        where: { id: videoId },
+        select: { sourceReview: true },
+      });
+      const existing = freshVideo?.sourceReview ? safeParseJson(freshVideo.sourceReview as string) : {};
       existing.ttsAudioUrl = ttsAudioUrl;
       await prisma.video.update({
         where: { id: videoId },
@@ -182,7 +188,12 @@ export async function POST(req: NextRequest) {
     // ─── STEP: CUT (generate one video cut) ───────────────────
     if (step === "cut") {
       const i = cutIndex ?? 0;
-      const meta = video.sourceReview ? JSON.parse(video.sourceReview as string) : {};
+      // Re-read sourceReview from DB to get latest metadata (expand step may have updated it)
+      const freshForCut = await prisma.video.findUnique({
+        where: { id: videoId },
+        select: { sourceReview: true },
+      });
+      const meta = freshForCut?.sourceReview ? safeParseJson(freshForCut.sourceReview as string) : {};
       const cuts = meta.cuts || [];
       const cut = cuts[i];
 
@@ -223,6 +234,38 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      // ── Fetch character sheets + reference photo for character consistency ──
+      let referencePhotoUrl = "";
+      const characterSheetUrls: string[] = [];
+
+      // Get the user's primary/selected reference photo
+      const refPhoto = video.photoId
+        ? await prisma.photo.findFirst({ where: { id: video.photoId } })
+        : await prisma.photo.findFirst({ where: { userId: user.id, isPrimary: true } });
+      if (refPhoto?.url) {
+        referencePhotoUrl = refPhoto.url;
+      }
+
+      // Get both character sheets (poses + 360)
+      const characterSheets = await prisma.characterSheet.findMany({
+        where: { userId: user.id, status: "complete" },
+        orderBy: { createdAt: "desc" },
+      });
+
+      const posesSheet = characterSheets.find(s => s.type === "poses");
+      const threeDSheet = characterSheets.find(s => s.type === "3d_360");
+
+      if (posesSheet?.compositeUrl) {
+        characterSheetUrls.push(posesSheet.compositeUrl);
+      }
+      if (threeDSheet?.compositeUrl) {
+        characterSheetUrls.push(threeDSheet.compositeUrl);
+      }
+
+      if (characterSheetUrls.length > 0) {
+        console.log(`[process/cut] Character refs: ${characterSheetUrls.length} sheets + ${referencePhotoUrl ? "reference photo" : "no photo"}`);
+      }
+
       // Submit to FAL (returns immediately with job ID)
       const result = await generateVideo({
         model: selectedModel,
@@ -233,6 +276,8 @@ export async function POST(req: NextRequest) {
         industry: user.industry,
         usePromptEngine: false,
         duration: cut.generateDuration,
+        referencePhotoUrl,
+        characterSheetUrls,
       });
 
       // If FAL returned a failed status on submission, fail the video immediately
@@ -303,7 +348,12 @@ export async function POST(req: NextRequest) {
     // ─── STEP: POLL (check if a cut is done) ──────────────────
     if (step === "poll") {
       const i = cutIndex ?? 0;
-      const meta = video.sourceReview ? JSON.parse(video.sourceReview as string) : {};
+      // Re-read sourceReview from DB to get latest metadata (cut step may have updated it)
+      const freshForPoll = await prisma.video.findUnique({
+        where: { id: videoId },
+        select: { sourceReview: true },
+      });
+      const meta = freshForPoll?.sourceReview ? safeParseJson(freshForPoll.sourceReview as string) : {};
       const cutJob = meta.cutJobs?.[i];
 
       if (!cutJob?.jobId) {
@@ -413,7 +463,12 @@ export async function POST(req: NextRequest) {
 
     // ─── STEP: STITCH ─────────────────────────────────────────
     if (step === "stitch") {
-      const meta = video.sourceReview ? JSON.parse(video.sourceReview as string) : {};
+      // Re-read sourceReview from DB to get latest metadata
+      const freshForStitch = await prisma.video.findUnique({
+        where: { id: videoId },
+        select: { sourceReview: true },
+      });
+      const meta = freshForStitch?.sourceReview ? safeParseJson(freshForStitch.sourceReview as string) : {};
       const cutJobs = meta.cutJobs || {};
 
       const completedCuts: StitchCut[] = Object.values(cutJobs)

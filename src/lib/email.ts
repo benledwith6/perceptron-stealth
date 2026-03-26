@@ -20,6 +20,28 @@ const transporter = nodemailer.createTransport({
 
 const fromAddress = process.env.EMAIL_FROM || "noreply@example.com";
 
+// Basic email format validation
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * Sanitize a string to prevent email header injection.
+ * Strips newlines, carriage returns, and null bytes.
+ */
+function sanitizeHeaderValue(value: string): string {
+  return value.replace(/[\r\n\0]/g, "").trim();
+}
+
+/**
+ * Validate an email address format and sanitize against injection.
+ */
+function validateEmail(email: string): string {
+  const sanitized = sanitizeHeaderValue(email);
+  if (!EMAIL_REGEX.test(sanitized)) {
+    throw new Error(`Invalid email address: ${sanitized}`);
+  }
+  return sanitized;
+}
+
 /**
  * Send a generic email.
  */
@@ -29,10 +51,17 @@ export async function sendEmail(
   html: string,
   text?: string
 ): Promise<void> {
+  const safeTo = validateEmail(to);
+  const safeSubject = sanitizeHeaderValue(subject);
+
+  if (!safeSubject) {
+    throw new Error("Email subject cannot be empty");
+  }
+
   await transporter.sendMail({
     from: fromAddress,
-    to,
-    subject,
+    to: safeTo,
+    subject: safeSubject,
     html,
     text: text || html.replace(/<[^>]*>/g, ""),
   });

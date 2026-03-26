@@ -95,9 +95,16 @@ export async function uploadMedia(
   videoUrl: string,
   filename: string = "video.mp4"
 ): Promise<string> {
-  // Step 1: Get the video size
-  const headRes = await fetch(videoUrl, { method: "HEAD" });
-  const sizeBytes = parseInt(headRes.headers.get("content-length") || "0", 10);
+  // Step 1: Get the video size via HEAD request
+  let sizeBytes = 0;
+  try {
+    const headRes = await fetch(videoUrl, { method: "HEAD" });
+    if (headRes.ok) {
+      sizeBytes = parseInt(headRes.headers.get("content-length") || "0", 10);
+    }
+  } catch {
+    // HEAD failed — we'll use the fallback size below
+  }
 
   // Step 2: Create upload URL
   const upload: PBMediaUpload = await pbFetch("/media/create-upload-url", {

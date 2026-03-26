@@ -61,7 +61,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    return NextResponse.json(voice);
+    return NextResponse.json(voice, { status: 201 });
   } catch (error) {
     console.error("[POST /api/voices] Unexpected error:", error);
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });

@@ -45,6 +45,8 @@ model PasswordResetToken {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   expiresAt DateTime
   createdAt DateTime @default(now())
+
+  @@index([userId])
 }
 
 model EmailVerificationToken {
@@ -54,12 +56,14 @@ model EmailVerificationToken {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   expiresAt DateTime
   createdAt DateTime @default(now())
+
+  @@index([userId])
 }
 
 model BrandProfile {
   id             String   @id @default(uuid())
   userId         String   @unique
-  user           User     @relation(fields: [userId], references: [id])
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   brandName      String?
   tagline        String?
   toneOfVoice    String?
@@ -74,19 +78,21 @@ model BrandProfile {
 model Photo {
   id        String   @id @default(uuid())
   userId    String
-  user      User     @relation(fields: [userId], references: [id])
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   filename  String
   url       String
   isPrimary Boolean  @default(false)
   createdAt DateTime @default(now())
 
   videos Video[]
+
+  @@index([userId])
 }
 
 model VoiceSample {
   id        String   @id @default(uuid())
   userId    String
-  user      User     @relation(fields: [userId], references: [id])
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   filename  String
   url       String
   duration  Int      @default(0)
@@ -94,12 +100,14 @@ model VoiceSample {
   createdAt DateTime @default(now())
 
   videos Video[]
+
+  @@index([userId])
 }
 
 model Video {
   id            String   @id @default(uuid())
   userId        String
-  user          User     @relation(fields: [userId], references: [id])
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   title         String
   description   String?
   script        String?
@@ -111,33 +119,44 @@ model Video {
   contentType   String   @default("general")
   sourceReview  String?
   photoId       String?
-  photo         Photo?   @relation(fields: [photoId], references: [id])
+  photo         Photo?   @relation(fields: [photoId], references: [id], onDelete: SetNull)
   voiceId       String?
-  voice         VoiceSample? @relation(fields: [voiceId], references: [id])
+  voice         VoiceSample? @relation(fields: [voiceId], references: [id], onDelete: SetNull)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
   schedule        Schedule?
   analyticsEvents AnalyticsEvent[]
+
+  @@index([userId])
+  @@index([status])
+  @@index([contentType])
+  @@index([photoId])
+  @@index([voiceId])
 }
 
 model Schedule {
-  id          String   @id @default(uuid())
-  videoId     String   @unique
-  video       Video    @relation(fields: [videoId], references: [id])
+  id          String    @id @default(uuid())
+  videoId     String    @unique
+  video       Video     @relation(fields: [videoId], references: [id], onDelete: Cascade)
   userId      String
-  user        User     @relation(fields: [userId], references: [id])
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   platform    String
   scheduledAt DateTime
   publishedAt DateTime?
-  status      String   @default("scheduled")
-  createdAt   DateTime @default(now())
+  status      String    @default("scheduled")
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@index([scheduledAt])
 }
 
 model SocialAccount {
   id           String    @id @default(uuid())
   userId       String
-  user         User      @relation(fields: [userId], references: [id])
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   platform     String
   handle       String
   connected    Boolean   @default(true)
@@ -150,18 +169,24 @@ model SocialAccount {
   updatedAt    DateTime  @updatedAt
 
   @@unique([userId, platform])
+  @@index([userId])
 }
 
 model AnalyticsEvent {
   id        String   @id @default(uuid())
   userId    String
-  user      User     @relation(fields: [userId], references: [id])
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   videoId   String?
-  video     Video?   @relation(fields: [videoId], references: [id])
+  video     Video?   @relation(fields: [videoId], references: [id], onDelete: SetNull)
   eventType String
   platform  String?
   count     Int      @default(1)
   date      DateTime @default(now())
+
+  @@index([userId])
+  @@index([videoId])
+  @@index([eventType])
+  @@index([userId, eventType])
 }
 
 // ─── Character Sheets ───────────────────────────────────────────
@@ -169,13 +194,16 @@ model AnalyticsEvent {
 model CharacterSheet {
   id           String   @id @default(uuid())
   userId       String
-  user         User     @relation(fields: [userId], references: [id])
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   type         String   // "poses" | "3d_360"
   compositeUrl String?
   status       String   @default("generating") // generating | complete | failed
   createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   images CharacterSheetImage[]
+
+  @@index([userId])
 }
 
 model CharacterSheetImage {
@@ -186,6 +214,8 @@ model CharacterSheetImage {
   position         Int
   angle            String?
   createdAt        DateTime       @default(now())
+
+  @@index([characterSheetId])
 }
 
 // ─── System Configuration ───────────────────────────────────────
@@ -196,5 +226,6 @@ model SystemConfig {
   value     String
   label     String
   category  String   // "models" | "prompts" | "onboarding"
+  createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }

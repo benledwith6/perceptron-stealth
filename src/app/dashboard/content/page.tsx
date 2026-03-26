@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
 import {
   Play,
@@ -70,15 +70,24 @@ export default function ContentPage() {
   const [videoError, setVideoError] = useState<string | undefined>();
 
   useEffect(() => {
-    fetchVideos();
+    const controller = new AbortController();
+    fetchVideos(controller.signal);
+    return () => controller.abort();
   }, []);
 
-  async function fetchVideos() {
+  async function fetchVideos(signal?: AbortSignal) {
     setLoading(true);
     try {
-      const res = await fetch("/api/videos");
-      if (res.ok) setVideos(await res.json());
-    } catch {} finally {
+      const res = await fetch("/api/videos", { signal });
+      if (res.ok) {
+        const data = await res.json();
+        setVideos(Array.isArray(data) ? data : []);
+      }
+    } catch (err: any) {
+      if (err?.name !== "AbortError") {
+        console.error("Failed to fetch videos:", err);
+      }
+    } finally {
       setLoading(false);
     }
   }
@@ -299,20 +308,31 @@ function VideoGridCard({
   const videoPreviewRef = useRef<HTMLVideoElement>(null);
   const [hovering, setHovering] = useState(false);
 
-  function handleMouseEnter() {
+  // Pause preview video on unmount to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      if (videoPreviewRef.current) {
+        videoPreviewRef.current.pause();
+        videoPreviewRef.current.removeAttribute("src");
+        videoPreviewRef.current.load();
+      }
+    };
+  }, []);
+
+  const handleMouseEnter = useCallback(() => {
     setHovering(true);
     if (video.videoUrl && videoPreviewRef.current) {
       videoPreviewRef.current.play().catch(() => {});
     }
-  }
+  }, [video.videoUrl]);
 
-  function handleMouseLeave() {
+  const handleMouseLeave = useCallback(() => {
     setHovering(false);
     if (videoPreviewRef.current) {
       videoPreviewRef.current.pause();
       videoPreviewRef.current.currentTime = 0;
     }
-  }
+  }, []);
 
   return (
     <div

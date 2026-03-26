@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { Check, Minus, ChevronDown } from "lucide-react";
 import MarketingLayout from "@/components/marketing/MarketingLayout";
 import CTASection from "@/components/marketing/CTASection";
@@ -278,8 +278,8 @@ export default function PricingClient() {
               </thead>
               <tbody>
                 {comparisonFeatures.map((group) => (
-                  <>
-                    <tr key={group.category}>
+                  <Fragment key={group.category}>
+                    <tr>
                       <td
                         colSpan={4}
                         className="pt-8 pb-3 text-[12px] font-medium text-blue-400/60 uppercase tracking-widest"
@@ -306,7 +306,7 @@ export default function PricingClient() {
                         </td>
                       </tr>
                     ))}
-                  </>
+                  </Fragment>
                 ))}
               </tbody>
             </table>

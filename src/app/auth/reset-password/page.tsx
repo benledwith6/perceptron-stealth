@@ -11,6 +11,7 @@ function ResetPasswordForm() {
   const emailParam = searchParams.get("email") || "";
 
   const [email, setEmail] = useState(emailParam);
+  const [currentPassword, setCurrentPassword] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [error, setError] = useState("");
@@ -26,6 +27,11 @@ function ResetPasswordForm() {
       return;
     }
 
+    if (!currentPassword) {
+      setError("Current password is required");
+      return;
+    }
+
     if (password.length < 8) {
       setError("Password must be at least 8 characters");
       return;
@@ -36,13 +42,18 @@ function ResetPasswordForm() {
       return;
     }
 
+    if (currentPassword === password) {
+      setError("New password must be different from your current password");
+      return;
+    }
+
     setLoading(true);
 
     try {
       const res = await fetch("/api/auth/reset-password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: email.trim(), password }),
+        body: JSON.stringify({ email: email.trim(), currentPassword, password }),
       });
 
       const data = await res.json();
@@ -103,6 +114,23 @@ function ResetPasswordForm() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="you@example.com"
+              className="input-field pl-11"
+              required
+            />
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-white/60 mb-2">
+            Current password
+          </label>
+          <div className="relative">
+            <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30" />
+            <input
+              type="password"
+              value={currentPassword}
+              onChange={(e) => setCurrentPassword(e.target.value)}
+              placeholder="Enter your current password"
               className="input-field pl-11"
               required
             />

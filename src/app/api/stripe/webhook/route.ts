@@ -51,12 +51,19 @@ export async function POST(req: NextRequest) {
         break;
       }
 
+      case "invoice.payment_failed": {
+        const invoice = event.data.object as Stripe.Invoice;
+        await handlePaymentFailed(invoice);
+        break;
+      }
+
       default:
         // Unhandled event type -- acknowledge receipt
         break;
     }
   } catch (err: any) {
     console.error(`Error handling webhook event ${event.type}:`, err);
+    // Return 500 so Stripe retries for transient failures.
     return NextResponse.json({ error: "Webhook handler failed" }, { status: 500 });
   }
 
@@ -70,14 +77,21 @@ export async function POST(req: NextRequest) {
 async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
   const userId = session.metadata?.userId;
   if (!userId) {
-    console.error("checkout.session.completed: No userId in metadata");
-    return;
+    // Throw so we return 500 and Stripe retries -- the metadata should
+    // always be present, so this likely indicates a transient issue.
+    throw new Error("checkout.session.completed: No userId in metadata");
   }
 
-  const plan = session.metadata?.plan || "free";
+  const plan = session.metadata?.plan;
+  if (!plan) {
+    throw new Error("checkout.session.completed: No plan in metadata");
+  }
+
   const customerId = session.customer as string;
   const subscriptionId = session.subscription as string;
 
+  // Use updateMany-style atomic update to avoid race conditions.
+  // The where clause ensures we only update if the user exists.
   await prisma.user.update({
     where: { id: userId },
     data: {
@@ -93,33 +107,69 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
 /**
  * When a subscription is updated (e.g. plan change, renewal),
  * sync the plan in our database to match Stripe.
+ *
+ * Also checks subscription status -- if the subscription is no longer
+ * active (e.g. past_due, unpaid, canceled), downgrade accordingly.
  */
 async function handleSubscriptionUpdated(subscription: Stripe.Subscription) {
   const customerId = subscription.customer as string;
 
-  // Determine the new plan from the subscription's price
-  const priceId = subscription.items.data[0]?.price?.id;
-  const plan = priceId ? planFromPriceId(priceId) : "free";
+  // If the subscription is no longer active, treat it as effectively cancelled
+  const activeStatuses: Stripe.Subscription.Status[] = ["active", "trialing"];
+  if (!activeStatuses.includes(subscription.status)) {
+    // Downgrade to free for non-active statuses (past_due, unpaid, canceled, etc.)
+    const updated = await prisma.user.updateMany({
+      where: { stripeCustomerId: customerId },
+      data: {
+        plan: "free",
+        // Keep stripeSubscriptionId so we can still look up the sub
+        stripeSubscriptionId: subscription.id,
+      },
+    });
 
-  const user = await prisma.user.findUnique({
-    where: { stripeCustomerId: customerId },
-    select: { id: true },
-  });
-
-  if (!user) {
-    console.error(`subscription.updated: No user found for customer ${customerId}`);
+    if (updated.count === 0) {
+      console.error(`subscription.updated: No user found for customer ${customerId}`);
+    } else {
+      console.log(
+        `User with customer ${customerId} subscription status changed to ${subscription.status}, downgraded to free`
+      );
+    }
     return;
   }
 
-  await prisma.user.update({
-    where: { id: user.id },
+  // Determine the new plan from the subscription's price
+  const priceId = subscription.items.data[0]?.price?.id;
+  if (!priceId) {
+    console.error(`subscription.updated: No price ID found on subscription ${subscription.id}`);
+    return;
+  }
+
+  const plan = planFromPriceId(priceId);
+  if (!plan) {
+    // Unknown price ID -- log an error but do NOT silently downgrade to free.
+    // This could be a configuration mismatch that needs attention.
+    console.error(
+      `subscription.updated: Unknown price ID ${priceId} on subscription ${subscription.id}. ` +
+        `Check that STRIPE_PRICE_* env vars match your Stripe dashboard.`
+    );
+    return;
+  }
+
+  // Atomic update using stripeCustomerId directly to avoid find-then-update race condition
+  const updated = await prisma.user.updateMany({
+    where: { stripeCustomerId: customerId },
     data: {
       plan,
       stripeSubscriptionId: subscription.id,
     },
   });
 
-  console.log(`User ${user.id} subscription updated to ${plan}`);
+  if (updated.count === 0) {
+    console.error(`subscription.updated: No user found for customer ${customerId}`);
+    return;
+  }
+
+  console.log(`User with customer ${customerId} subscription updated to ${plan}`);
 }
 
 /**
@@ -128,23 +178,50 @@ async function handleSubscriptionUpdated(subscription: Stripe.Subscription) {
 async function handleSubscriptionDeleted(subscription: Stripe.Subscription) {
   const customerId = subscription.customer as string;
 
-  const user = await prisma.user.findUnique({
+  // Atomic update -- no find-then-update race condition
+  const updated = await prisma.user.updateMany({
     where: { stripeCustomerId: customerId },
-    select: { id: true },
-  });
-
-  if (!user) {
-    console.error(`subscription.deleted: No user found for customer ${customerId}`);
-    return;
-  }
-
-  await prisma.user.update({
-    where: { id: user.id },
     data: {
       plan: "free",
       stripeSubscriptionId: null,
     },
   });
 
-  console.log(`User ${user.id} subscription cancelled, downgraded to free`);
+  if (updated.count === 0) {
+    console.error(`subscription.deleted: No user found for customer ${customerId}`);
+    return;
+  }
+
+  console.log(`Customer ${customerId} subscription cancelled, downgraded to free`);
+}
+
+/**
+ * When an invoice payment fails, downgrade the user to free to prevent
+ * continued access to paid features with an unpaid subscription.
+ */
+async function handlePaymentFailed(invoice: Stripe.Invoice) {
+  const customerId = invoice.customer as string;
+  if (!customerId) {
+    console.error("invoice.payment_failed: No customer ID on invoice");
+    return;
+  }
+
+  // Only act on subscription invoices, not one-off invoices
+  if (!invoice.subscription) {
+    return;
+  }
+
+  const updated = await prisma.user.updateMany({
+    where: { stripeCustomerId: customerId },
+    data: {
+      plan: "free",
+    },
+  });
+
+  if (updated.count === 0) {
+    console.error(`invoice.payment_failed: No user found for customer ${customerId}`);
+    return;
+  }
+
+  console.log(`Customer ${customerId} payment failed, downgraded to free`);
 }

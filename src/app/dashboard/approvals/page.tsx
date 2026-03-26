@@ -34,14 +34,25 @@ export default function ApprovalsPage() {
   const [feedback, setFeedback] = useState("");
   const [acting, setActing] = useState(false);
 
-  useEffect(() => { fetchPending(); }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchPending(controller.signal);
+    return () => controller.abort();
+  }, []);
 
-  async function fetchPending() {
+  async function fetchPending(signal?: AbortSignal) {
     setLoading(true);
     try {
-      const res = await fetch("/api/videos?status=review");
-      if (res.ok) setVideos(await res.json());
-    } catch {} finally { setLoading(false); }
+      const res = await fetch("/api/videos?status=review", { signal });
+      if (res.ok) {
+        const data = await res.json();
+        setVideos(Array.isArray(data) ? data : []);
+      }
+    } catch (err: any) {
+      if (err?.name !== "AbortError") {
+        console.error("Failed to fetch pending videos:", err);
+      }
+    } finally { setLoading(false); }
   }
 
   async function updateStatus(status: "approved" | "rejected" | "draft") {
