@@ -22,18 +22,23 @@ export interface VoiceCloneResult {
 
 // ─── FAL MiniMax TTS ────────────────────────────────────────────
 
-async function falMiniMaxTTS(text: string): Promise<TTSResult> {
+async function falMiniMaxTTS(text: string, voiceId?: string): Promise<TTSResult> {
   const apiKey = process.env.FAL_API_KEY;
   if (!apiKey) return { audioUrl: null, duration: 0, provider: "fal-minimax", error: "FAL_API_KEY not set" };
 
   try {
+    const body: Record<string, unknown> = { text };
+    if (voiceId) {
+      body.voice_setting = { voice_id: voiceId, speed: 1.0, vol: 1.0, pitch: 0 };
+    }
+
     const response = await fetch("https://fal.run/fal-ai/minimax/speech-02-hd", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Key ${apiKey}`,
       },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify(body),
     });
 
     if (!response.ok) {
@@ -129,7 +134,60 @@ async function elevenLabsTTS(text: string, voiceId?: string): Promise<TTSResult>
 
 // ─── Voice Clone ────────────────────────────────────────────────
 
+/**
+ * Clone a voice via FAL MiniMax (preferred) or ElevenLabs (fallback).
+ * Returns a voiceId that can be passed to generateVoiceover().
+ */
 export async function cloneVoice(audioUrl: string, name: string): Promise<VoiceCloneResult> {
+  // Try FAL MiniMax first — same provider as our primary TTS
+  if (process.env.FAL_API_KEY) {
+    const result = await falMiniMaxCloneVoice(audioUrl);
+    if (result.voiceId) return result;
+    console.log(`[voice] FAL MiniMax clone failed: ${result.error}, trying ElevenLabs...`);
+  }
+
+  // Fallback to ElevenLabs
+  if (process.env.ELEVENLABS_API_KEY) {
+    const result = await elevenLabsCloneVoice(audioUrl, name);
+    if (result.voiceId) return result;
+  }
+
+  return { voiceId: "", provider: "none", error: "No voice clone provider available" };
+}
+
+async function falMiniMaxCloneVoice(audioUrl: string): Promise<VoiceCloneResult> {
+  const apiKey = process.env.FAL_API_KEY;
+  if (!apiKey) return { voiceId: "", provider: "fal-minimax", error: "FAL_API_KEY not set" };
+
+  try {
+    const response = await fetch("https://fal.run/fal-ai/minimax/voice-clone", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Key ${apiKey}`,
+      },
+      body: JSON.stringify({ audio_url: audioUrl }),
+    });
+
+    if (!response.ok) {
+      const err = await response.text();
+      return { voiceId: "", provider: "fal-minimax", error: `FAL clone ${response.status}: ${err.substring(0, 200)}` };
+    }
+
+    const data = await response.json();
+    const customVoiceId = data.custom_voice_id;
+
+    if (customVoiceId) {
+      return { voiceId: customVoiceId, provider: "fal-minimax" };
+    }
+
+    return { voiceId: "", provider: "fal-minimax", error: "No custom_voice_id in response" };
+  } catch (err: any) {
+    return { voiceId: "", provider: "fal-minimax", error: err.message };
+  }
+}
+
+async function elevenLabsCloneVoice(audioUrl: string, name: string): Promise<VoiceCloneResult> {
   const apiKey = process.env.ELEVENLABS_API_KEY;
   if (!apiKey) return { voiceId: "", provider: "elevenlabs", error: "Not configured" };
 
@@ -168,7 +226,7 @@ export async function cloneVoice(audioUrl: string, name: string): Promise<VoiceC
 export async function generateVoiceover(text: string, voiceId?: string): Promise<TTSResult> {
   // Try FAL MiniMax first (uses same FAL key as video — best quality per course)
   if (process.env.FAL_API_KEY) {
-    const result = await falMiniMaxTTS(text);
+    const result = await falMiniMaxTTS(text, voiceId);
     if (result.audioUrl) return result;
     console.log(`[voice] FAL MiniMax failed: ${result.error}, trying fallbacks...`);
   }

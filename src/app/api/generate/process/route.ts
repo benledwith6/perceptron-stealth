@@ -100,24 +100,26 @@ export async function POST(req: NextRequest) {
       const plan = planComposition(selectedFormat, rawScript);
       const expandedPlan = await expandCutPrompts(plan, user.id, selectedModel, user.industry);
 
-      // Store expanded prompts in the video's script field
-      const allPrompts = expandedPlan.format.cuts.map((c, i) =>
-        `═══ CUT ${i + 1}: ${c.type.toUpperCase()} (${c.duration}s) ═══\n${c.prompt}`
-      ).join("\n\n");
-
-      // Store cut data as JSON in description for later steps
+      // Store cut data as JSON in sourceReview for later steps
       const cutData = expandedPlan.format.cuts.map(c => ({
         index: c.index,
         type: c.type,
         duration: c.duration,
         generateDuration: c.generateDuration,
         prompt: c.prompt,
+        script: c.script || "",
       }));
+
+      // Build dialogue-only script for TTS (not the full production prompts)
+      const dialogueScript = expandedPlan.format.cuts
+        .map(c => c.script || "")
+        .filter(s => s.length > 0)
+        .join(" ");
 
       await prisma.video.update({
         where: { id: videoId },
         data: {
-          script: allPrompts.substring(0, 5000),
+          script: dialogueScript.substring(0, 5000),
           sourceReview: JSON.stringify({
             cuts: cutData,
             format: selectedFormat,
@@ -141,7 +143,14 @@ export async function POST(req: NextRequest) {
 
       if (rawScript && rawScript.length > 10) {
         try {
-          const ttsResult = await generateVoiceover(rawScript);
+          // Look up user's cloned voice for personalized TTS
+          const defaultVoice = await prisma.voiceSample.findFirst({
+            where: { userId: user.id, isDefault: true },
+            select: { clonedVoiceId: true },
+          });
+          const clonedVoiceId = defaultVoice?.clonedVoiceId ?? undefined;
+
+          const ttsResult = await generateVoiceover(rawScript, clonedVoiceId);
           if (ttsResult.audioUrl) {
             if (isStorageConfigured() && !ttsResult.audioUrl.startsWith("data:")) {
               try {

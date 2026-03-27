@@ -16,13 +16,15 @@ import {
   Calendar,
   BarChart3,
   Play,
+  Mic,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import SessionProvider from "@/components/SessionProvider";
+import VoiceRecorder from "@/components/VoiceRecorder";
 import { GenerationProgressBar } from "@/components/GenerationProgress";
 import type { GenerationProgress as ProgressType } from "@/hooks/use-generation-progress";
 
-type Step = "industry" | "photos" | "character" | "video";
+type Step = "industry" | "photos" | "character" | "voice" | "video";
 
 // Sub-phases within the video step for the premium loading experience
 type VideoPhase =
@@ -201,7 +203,7 @@ function OnboardingFlow() {
   const [pipelineProgress, setPipelineProgress] = useState<ProgressType | null>(null);
   const videoPlayerRef = useRef<HTMLVideoElement>(null);
 
-  const stepIndex = ["industry", "photos", "character", "video"].indexOf(step);
+  const stepIndex = ["industry", "photos", "character", "voice", "video"].indexOf(step);
 
   // Clean up on unmount
   useEffect(() => {
@@ -595,7 +597,7 @@ function OnboardingFlow() {
               Official <span className="text-blue-400">AI</span>
             </span>
             <div className="flex items-center gap-1.5">
-              {[0, 1, 2, 3].map((i) => (
+              {[0, 1, 2, 3, 4].map((i) => (
                 <div
                   key={i}
                   className={`h-1 rounded-full transition-all duration-500 ${
@@ -652,6 +654,7 @@ function OnboardingFlow() {
                   </button>
                 ))}
               </div>
+
             </div>
           )}
 
@@ -736,6 +739,7 @@ function OnboardingFlow() {
                   Continue <ArrowRight className="w-4 h-4" />
                 </button>
               </div>
+
             </div>
           )}
 
@@ -794,7 +798,7 @@ function OnboardingFlow() {
                     </div>
                     <div className="hidden sm:block flex-1" />
                     <button
-                      onClick={enterVideoStep}
+                      onClick={() => setStep("voice")}
                       className="flex items-center justify-center gap-2 px-6 py-3.5 min-h-[48px] rounded-xl bg-white text-[#050508] text-[14px] font-medium hover:bg-white/90 active:bg-white/80 transition-all"
                     >
                       Looks like me <ArrowRight className="w-4 h-4" />
@@ -804,22 +808,60 @@ function OnboardingFlow() {
               ) : (
                 <div className="text-center py-16">
                   <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-white/[0.04] mb-6">
-                    <Check className="w-5 h-5 text-white/30" />
+                    <Loader2 className="w-5 h-5 text-white/40 animate-spin" />
                   </div>
-                  <h1 className="text-[22px] font-semibold text-white/90 mb-2">Avatar created</h1>
-                  <p className="text-[14px] text-white/30 mb-8">Your character model is ready.</p>
+                  <h1 className="text-[22px] font-semibold text-white/90 mb-2">Building your avatar</h1>
+                  <p className="text-[14px] text-white/30 mb-8">Generating your character sheet...</p>
                   <button
-                    onClick={enterVideoStep}
+                    onClick={() => generateCharacterSheet()}
                     className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-white text-[#050508] text-[14px] font-medium hover:bg-white/90 transition-all"
                   >
-                    Generate my video <ArrowRight className="w-4 h-4" />
+                    <RefreshCw className="w-4 h-4" /> Generate now
                   </button>
                 </div>
               )}
             </div>
           )}
 
-          {/* ════ STEP 4: VIDEO (Premium Experience) ════ */}
+          {/* ════ STEP 4: VOICE RECORDING ════ */}
+          {step === "voice" && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
+            >
+              <div className="text-center mb-8">
+                <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-white/[0.04] mb-5">
+                  <Mic className="w-6 h-6 text-white/30" />
+                </div>
+                <p className="text-sm text-white/30 mb-2">Step 4</p>
+                <h1 className="text-[28px] font-semibold tracking-tight text-white leading-tight mb-1">
+                  Record your voice
+                </h1>
+                <p className="text-[15px] text-white/40 max-w-sm mx-auto">
+                  Read the script below so we can clone your voice for videos.
+                </p>
+              </div>
+
+              <VoiceRecorder
+                onSaved={(voiceSampleId) => {
+                  // Clone voice in background — don't block onboarding flow
+                  fetch("/api/voices/clone", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ voiceSampleId }),
+                  }).catch((err) =>
+                    console.warn("[onboarding] Voice clone failed:", err)
+                  );
+                  enterVideoStep();
+                }}
+                onSkip={() => enterVideoStep()}
+              />
+
+            </motion.div>
+          )}
+
+          {/* ════ STEP 5: VIDEO (Premium Experience) ════ */}
           {step === "video" && (
             <AnimatePresence mode="wait">
 
@@ -888,6 +930,8 @@ function OnboardingFlow() {
                       ))}
                     </div>
                   </motion.div>
+
+                  {/* Demo skip button */}
                 </motion.div>
               )}
 
@@ -961,6 +1005,8 @@ function OnboardingFlow() {
                   >
                     Usually takes 1-3 minutes. Stay on this page.
                   </motion.p>
+
+                  {/* Demo skip buttons */}
                 </motion.div>
               )}
 
@@ -998,7 +1044,7 @@ function OnboardingFlow() {
                           playsInline
                           muted
                           onEnded={handleVideoEnded}
-                          className="w-full h-full object-cover"
+                          className="w-full h-full object-contain"
                         />
                       ) : (
                         <div className="w-full h-full flex items-center justify-center">

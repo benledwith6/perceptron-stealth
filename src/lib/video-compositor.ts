@@ -24,6 +24,7 @@ export interface Cut {
   duration: number;          // how long this cut appears in final video
   generateDuration: number;  // how long to generate (always longer, we trim)
   prompt: string;            // generation prompt for this specific cut
+  script?: string;           // dialogue-only portion (for TTS voiceover)
   camera: string;            // camera angle/style for this cut
   audio: string;             // what audio plays during this cut
   notes: string;             // editorial notes
@@ -347,7 +348,7 @@ export async function expandCutPrompts(
         industry,
         duration: cut.generateDuration,
       });
-      expandedCuts.push({ ...cut, prompt: expanded.expandedPrompt });
+      expandedCuts.push({ ...cut, prompt: expanded.expandedPrompt, script: expanded.script });
     } catch {
       expandedCuts.push(cut);
     }
