@@ -117,9 +117,10 @@ export function splitScriptForCuts(
  * from the composition plan.
  */
 export async function generatePerCutAudioWithDuration(
-  segments: string[]
+  segments: string[],
+  voiceId?: string
 ): Promise<AudioPlanResult> {
-  const result = await generatePerCutAudio(segments);
+  const result = await generatePerCutAudio(segments, voiceId);
 
   const cutAudio: CutAudioEntry[] = result.segments.map((seg, i) => ({
     url: seg.url,

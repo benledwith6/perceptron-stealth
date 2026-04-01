@@ -61,7 +61,9 @@ export async function handleTTS(videoId: string, userId: string): Promise<StepRe
       );
 
       // Step 2: Generate TTS for each segment individually
-      const audioResult = await generatePerCutAudioWithDuration(segments);
+      // Thread voiceCloneId from pipeline meta (set by onboarding preview-video)
+      const voiceCloneId = (meta as any).voiceCloneId as string | undefined;
+      const audioResult = await generatePerCutAudioWithDuration(segments, voiceCloneId);
 
       console.log(
         `[pipeline/tts] Per-cut audio: ${audioResult.complete ? "all succeeded" : `${audioResult.failedCuts.length} failed`}`

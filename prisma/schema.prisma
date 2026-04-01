@@ -89,14 +89,16 @@ model Photo {
 }
 
 model VoiceSample {
-  id        String   @id @default(uuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id])
-  filename  String
-  url       String
-  duration  Int      @default(0)
-  isDefault Boolean  @default(false)
-  createdAt DateTime @default(now())
+  id           String   @id @default(uuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id])
+  filename     String
+  url          String
+  duration     Int      @default(0)
+  isDefault    Boolean  @default(false)
+  voiceCloneId String?
+  provider     String?
+  createdAt    DateTime @default(now())
 
   videos Video[]
 }

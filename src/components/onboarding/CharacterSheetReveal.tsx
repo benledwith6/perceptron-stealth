@@ -8,6 +8,12 @@ interface CharacterSheetRevealProps {
   photoUrl: string;
   industry: string;
   onSelect: (poseUrl: string, sheetId: string) => void;
+  /** Pre-fetched composite URL from background generation */
+  preloadedCompositeUrl?: string | null;
+  /** Pre-fetched sheet ID from background generation */
+  preloadedSheetId?: string | null;
+  /** External signal that generation is already in progress */
+  isGenerating?: boolean;
 }
 
 const LOADING_STAGES = [
@@ -90,7 +96,14 @@ function ConfettiBurst({ active }: { active: boolean }) {
   );
 }
 
-export default function CharacterSheetReveal({ photoUrl, industry, onSelect }: CharacterSheetRevealProps) {
+export default function CharacterSheetReveal({
+  photoUrl,
+  industry,
+  onSelect,
+  preloadedCompositeUrl,
+  preloadedSheetId,
+  isGenerating,
+}: CharacterSheetRevealProps) {
   const [state, setState] = useState<RevealState>("loading");
   const [stageIndex, setStageIndex] = useState(0);
   const [compositeUrl, setCompositeUrl] = useState<string | null>(null);
@@ -149,9 +162,27 @@ export default function CharacterSheetReveal({ photoUrl, industry, onSelect }: C
     }
   }, [photoUrl, industry]);
 
+  // If preloaded data is provided, skip fetch and go straight to reveal
   useEffect(() => {
-    if (!hasFetched.current) generate();
-  }, [generate]);
+    if (preloadedCompositeUrl) {
+      setCompositeUrl(preloadedCompositeUrl);
+      setSheetId(preloadedSheetId || null);
+      setState("reveal");
+      hasFetched.current = true;
+    }
+  }, [preloadedCompositeUrl, preloadedSheetId]);
+
+  // If external generation is signaled but no URL yet, stay in loading
+  useEffect(() => {
+    if (isGenerating && !preloadedCompositeUrl) {
+      setState("loading");
+      hasFetched.current = true;
+    }
+  }, [isGenerating, preloadedCompositeUrl]);
+
+  useEffect(() => {
+    if (!hasFetched.current && !preloadedCompositeUrl && !isGenerating) generate();
+  }, [generate, preloadedCompositeUrl, isGenerating]);
 
   const handleImageLoad = () => {
     setImageLoaded(true);
@@ -312,7 +343,7 @@ export default function CharacterSheetReveal({ photoUrl, industry, onSelect }: C
                 transition={{ delay: 0.1, type: "spring", stiffness: 200 }}
                 className="text-[26px] font-extrabold text-white tracking-tight"
               >
-                Wait... is that you?? 🤯
+                Looks like you?? 🤯
               </motion.p>
               <motion.p
                 initial={{ opacity: 0 }}

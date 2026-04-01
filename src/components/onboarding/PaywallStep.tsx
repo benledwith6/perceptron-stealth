@@ -84,7 +84,7 @@ export default function PaywallStep({ videoUrl, videoGenerating }: PaywallStepPr
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
         transition={{ duration: 0.5, ease: [0.16, 1, 0.3, 1] }}
-        className="relative rounded-2xl overflow-hidden aspect-[9/16] max-h-[280px] bg-black/40 border border-white/[0.08]"
+        className="relative rounded-2xl overflow-hidden aspect-[9/16] max-h-[480px] bg-black/40 border border-white/[0.08]"
       >
         {videoGenerating && !videoUrl && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
@@ -104,10 +104,14 @@ export default function PaywallStep({ videoUrl, videoGenerating }: PaywallStepPr
               ref={videoRef}
               src={videoUrl}
               className="w-full h-full object-cover"
+              crossOrigin="anonymous"
               playsInline
+              muted
+              autoPlay
               loop
               onPlay={() => setVideoPlaying(true)}
               onPause={() => setVideoPlaying(false)}
+              onError={(e) => console.error("[PaywallStep] Video failed to load:", videoUrl, e)}
               onClick={() => {
                 if (videoRef.current?.paused) videoRef.current.play();
                 else videoRef.current?.pause();

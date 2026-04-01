@@ -1,617 +1,701 @@
 "use client";
 
-import Link from "next/link";
-import { ArrowRight, Check, Zap, Camera, Sparkles, Send, Play, Star, Quote } from "lucide-react";
-import MarketingLayout from "@/components/marketing/MarketingLayout";
-import FadeIn from "@/components/motion/FadeIn";
+import { useState, useCallback, useEffect } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Check } from "lucide-react";
+import SessionProvider from "@/components/SessionProvider";
+import PhotoChoice from "@/components/onboarding/PhotoChoice";
+import ExpressionCapture from "@/components/onboarding/ExpressionCapture";
+import PhotoUpload from "@/components/onboarding/PhotoUpload";
+import CharacterSheetReveal from "@/components/onboarding/CharacterSheetReveal";
+import VoiceCapture from "@/components/onboarding/VoiceCapture";
+import PaywallStep from "@/components/onboarding/PaywallStep";
 
-const testimonials = [
-  {
-    name: "Marcus Rivera",
-    title: "Managing Partner",
-    industry: "Personal Injury Law",
-    quote:
-      "We were spending $4,000 a month on a videographer who delivered four videos. Official AI gives us 30 for a fraction of the cost and they actually look like me on camera.",
-  },
-  {
-    name: "Dr. Priya Patel",
-    title: "Board-Certified Dermatologist",
-    industry: "Medical",
-    quote:
-      "My patients constantly tell me they watched my videos before booking. I review the scripts for accuracy, approve them, and they post automatically. It takes me 20 minutes a week.",
-  },
-  {
-    name: "Sarah Mitchell",
-    title: "Broker / Owner",
-    industry: "Real Estate",
-    quote:
-      "I went from posting once a month to five times a week. My DMs are full of people saying they see me everywhere. Three new listings came from social this quarter alone.",
-  },
+// ─── Step types ──────────────────────────────────────────────────
+
+type Step =
+  | "welcome"
+  | "photo_choice"
+  | "camera_happy"
+  | "camera_sad"
+  | "camera_angry"
+  | "camera_silly"
+  | "upload_more"
+  | "voice"
+  | "character_reveal"
+  | "paywall";
+
+// ─── Expression definitions ──────────────────────────────────────
+
+const EXPRESSIONS: { step: Step; emoji: string; label: string }[] = [
+  { step: "camera_happy", emoji: "😊", label: "Make a happy face!" },
+  { step: "camera_sad", emoji: "😢", label: "Frown" },
+  { step: "camera_angry", emoji: "😠", label: "Be angry" },
+  { step: "camera_silly", emoji: "🤪", label: "Be silly" },
 ];
 
-export default function LandingPage() {
+// ─── Step bar groups ─────────────────────────────────────────────
+
+type StepGroup = "photos" | "voice" | "twin" | "golive";
+
+const STEP_GROUPS: { key: StepGroup; label: string; emoji: string }[] = [
+  { key: "photos", label: "Photos", emoji: "📸" },
+  { key: "voice", label: "Voice", emoji: "🎙️" },
+  { key: "twin", label: "AI Twin", emoji: "🤖" },
+  { key: "golive", label: "Go Live", emoji: "🚀" },
+];
+
+function stepToGroup(step: Step): StepGroup {
+  if (step === "welcome") return "photos";
+  if (["photo_choice", "camera_happy", "camera_sad", "camera_angry", "camera_silly", "upload_more"].includes(step))
+    return "photos";
+  if (step === "voice") return "voice";
+  if (step === "character_reveal") return "twin";
+  return "golive";
+}
+
+// ─── Step bar component ──────────────────────────────────────────
+
+function StepBar({ current }: { current: Step }) {
+  const currentGroup = stepToGroup(current);
+  const groupIdx = STEP_GROUPS.findIndex((g) => g.key === currentGroup);
+
+  const cameraSteps: Step[] = ["camera_happy", "camera_sad", "camera_angry", "camera_silly"];
+  const cameraDoneCount = cameraSteps.filter((s) => {
+    const sIdx = cameraSteps.indexOf(s);
+    const curIdx = cameraSteps.indexOf(current as any);
+    return curIdx > sIdx;
+  }).length;
+  const inCameraFlow = cameraSteps.includes(current);
+
   return (
-    <MarketingLayout>
-      {/* Hero */}
-      <section className="relative pt-32 pb-24 px-6">
-        {/* Subtle gradient orbs */}
-        <div className="absolute top-20 left-1/2 -translate-x-1/2 w-[800px] h-[600px] pointer-events-none">
-          <div className="absolute top-0 left-1/4 w-[400px] h-[400px] bg-blue-500/[0.04] rounded-full blur-[120px]" />
-          <div className="absolute top-20 right-1/4 w-[300px] h-[300px] bg-purple-500/[0.04] rounded-full blur-[100px]" />
-        </div>
-
-        {/* Radial gradient glow behind the hero headline */}
-        <div className="absolute top-24 left-1/2 -translate-x-1/2 w-[600px] h-[400px] pointer-events-none">
-          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(76,110,245,0.12)_0%,rgba(124,58,237,0.06)_40%,transparent_70%)]" />
-        </div>
-
-        <div className="relative max-w-3xl mx-auto text-center">
-          <FadeIn delay={0} duration={0.6}>
-            {/* Badge */}
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/[0.04] border border-white/[0.06] mb-8">
-              <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              <span className="text-[12px] text-white/40 font-medium">
-                Now in beta
+    <div className="flex items-center gap-1.5">
+      {STEP_GROUPS.map((g, i) => {
+        const done = i < groupIdx;
+        const active = i === groupIdx;
+        return (
+          <div key={g.key} className="flex items-center gap-1.5">
+            {i > 0 && (
+              <motion.div
+                className="w-6 h-px"
+                animate={{ backgroundColor: done ? "rgba(99,102,241,0.6)" : "rgba(255,255,255,0.08)" }}
+                transition={{ duration: 0.5 }}
+              />
+            )}
+            <motion.div
+              className="flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-semibold transition-all"
+              animate={{
+                backgroundColor: active ? "rgba(99,102,241,0.15)" : done ? "rgba(99,102,241,0.06)" : "transparent",
+                borderColor: active ? "rgba(99,102,241,0.35)" : done ? "rgba(99,102,241,0.2)" : "rgba(255,255,255,0.06)",
+              }}
+              style={{ border: "1px solid" }}
+            >
+              {done ? (
+                <motion.div
+                  initial={{ scale: 0 }}
+                  animate={{ scale: 1 }}
+                  className="w-3.5 h-3.5 rounded-full bg-indigo-500 flex items-center justify-center"
+                >
+                  <Check className="w-2 h-2 text-white" />
+                </motion.div>
+              ) : (
+                <span>{g.emoji}</span>
+              )}
+              <span className={active ? "text-indigo-300" : done ? "text-white/40" : "text-white/15"}>
+                {g.label}
+                {active && g.key === "photos" && inCameraFlow && (
+                  <span className="ml-1 text-indigo-400/60">{cameraDoneCount}/4</span>
+                )}
               </span>
-            </div>
-          </FadeIn>
+            </motion.div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
-          <FadeIn delay={0.1} duration={0.7}>
-            <h1 className="text-[46px] sm:text-[64px] font-bold tracking-[-0.03em] leading-[1.05] text-white mb-6">
-              Your AI twin.
-              <br />
-              <span className="bg-gradient-to-r from-blue-400 via-violet-400 to-blue-400 bg-clip-text text-transparent">
-                Posting for you.
-              </span>
-            </h1>
-          </FadeIn>
+// ─── Step content config ─────────────────────────────────────────
 
-          <FadeIn delay={0.2} duration={0.7}>
-            <p className="text-[17px] sm:text-[19px] text-white/35 max-w-xl mx-auto mb-10 leading-relaxed font-light">
-              Upload a few photos. Get a full content team that creates,
-              schedules, and posts — using your face and voice.
-            </p>
-          </FadeIn>
+const STEP_CONTENT: Record<Step, { heading: string; sub: string }> = {
+  welcome: {
+    heading: "Try out AI Content!",
+    sub: "Create your AI twin and start posting in minutes.",
+  },
+  photo_choice: {
+    heading: "Let's see that face.",
+    sub: "We need a few expressions to build your AI twin.",
+  },
+  camera_happy: {
+    heading: "Make a happy face and smile!",
+    sub: "Take a photo and we'll save it to build your AI twin.",
+  },
+  camera_sad: {
+    heading: "Now look sad.",
+    sub: "A little frown goes a long way.",
+  },
+  camera_angry: {
+    heading: "Give us angry.",
+    sub: "Channel your inner intensity.",
+  },
+  camera_silly: {
+    heading: "Last one — be silly!",
+    sub: "Let loose. Have fun with it.",
+  },
+  upload_more: {
+    heading: "Got more photos?",
+    sub: "More reference = better AI twin.",
+  },
+  voice: {
+    heading: "Now let's hear you.",
+    sub: "Read the script below. ~30 seconds is perfect.",
+  },
+  character_reveal: {
+    heading: "Building your AI twin...",
+    sub: "Give us a few seconds. You're going to love this.",
+  },
+  paywall: {
+    heading: "Your AI twin is alive.",
+    sub: "Start posting daily. Zero effort.",
+  },
+};
 
-          <FadeIn delay={0.3} duration={0.7}>
-            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 mb-6">
-              <Link
-                href="/demo"
-                className="btn-cta-glow group inline-flex items-center justify-center gap-2.5 px-7 py-3.5 min-h-[48px] w-full sm:w-auto rounded-xl bg-white text-[#050508] text-[15px] font-semibold hover:bg-white/90 active:bg-white/80 transition-all"
+// ─── Ambient background ──────────────────────────────────────────
+
+function AmbientBg() {
+  return (
+    <div className="fixed inset-0 pointer-events-none overflow-hidden" aria-hidden>
+      <motion.div
+        className="absolute top-[-20%] left-[-10%] w-[600px] h-[600px] rounded-full"
+        style={{ background: "radial-gradient(circle, rgba(79,110,247,0.12) 0%, transparent 70%)" }}
+        animate={{ x: [0, 40, 0], y: [0, 20, 0] }}
+        transition={{ duration: 18, repeat: Infinity, ease: "easeInOut" }}
+      />
+      <motion.div
+        className="absolute top-[30%] right-[-15%] w-[500px] h-[500px] rounded-full"
+        style={{ background: "radial-gradient(circle, rgba(139,92,246,0.10) 0%, transparent 70%)" }}
+        animate={{ x: [0, -30, 0], y: [0, -40, 0] }}
+        transition={{ duration: 22, repeat: Infinity, ease: "easeInOut", delay: 3 }}
+      />
+      <motion.div
+        className="absolute bottom-[-10%] left-[30%] w-[400px] h-[400px] rounded-full"
+        style={{ background: "radial-gradient(circle, rgba(6,182,212,0.08) 0%, transparent 70%)" }}
+        animate={{ x: [0, 20, 0], y: [0, -20, 0] }}
+        transition={{ duration: 16, repeat: Infinity, ease: "easeInOut", delay: 6 }}
+      />
+    </div>
+  );
+}
+
+// ─── Event tracking ──────────────────────────────────────────────
+
+function trackEvent(event: string, metadata?: Record<string, unknown>) {
+  fetch("/api/events", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ event, metadata }),
+  }).catch(() => {});
+}
+
+// ─── Main flow ───────────────────────────────────────────────────
+
+function OnboardingFlow() {
+  const [step, setStep] = useState<Step>("welcome");
+  const [photoUrls, setPhotoUrls] = useState<string[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [voiceUploading, setVoiceUploading] = useState(false);
+
+  // Character sheet background generation
+  const [posesSheetUrl, setPosesSheetUrl] = useState<string | null>(null);
+  const [posesSheetId, setPosesSheetId] = useState<string | null>(null);
+  const [threeDSheetId, setThreeDSheetId] = useState<string | null>(null);
+  const [sheetGenerating, setSheetGenerating] = useState(false);
+
+  // Voice
+  const [voiceCloneId, setVoiceCloneId] = useState<string | null>(null);
+
+  // Welcome video
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [videoGenerating, setVideoGenerating] = useState(false);
+  const [videoId, setVideoId] = useState<string | null>(null);
+
+  // Shared camera stream across expression screens
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [cameraError, setCameraError] = useState(false);
+
+  // Track step transitions
+  useEffect(() => {
+    trackEvent(`onboarding_step_${step}`);
+  }, [step]);
+
+  // ── Camera management ──
+
+  const startCameraStream = useCallback(async () => {
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
+      });
+      setCameraStream(s);
+      return true;
+    } catch {
+      setCameraError(true);
+      return false;
+    }
+  }, []);
+
+  const stopCameraStream = useCallback(() => {
+    if (cameraStream) {
+      cameraStream.getTracks().forEach((t) => t.stop());
+      setCameraStream(null);
+    }
+  }, [cameraStream]);
+
+  // Cleanup camera on unmount
+  useEffect(() => {
+    return () => {
+      cameraStream?.getTracks().forEach((t) => t.stop());
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Photo capture handler (shared across expression screens) ──
+
+  const handleExpressionCapture = useCallback(
+    async (file: File, _previewUrl: string, nextStep: Step) => {
+      setUploading(true);
+      try {
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("type", "photo");
+
+        let uploadedUrl: string;
+        const res = await fetch("/api/upload", { method: "POST", body: formData });
+        if (res.ok) {
+          uploadedUrl = (await res.json()).url;
+        } else {
+          uploadedUrl = `/uploads/photos/${Date.now()}-${file.name}`;
+        }
+
+        // Create photo record
+        await fetch("/api/photos", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            filename: file.name,
+            url: uploadedUrl,
+            isPrimary: photoUrls.length === 0,
+          }),
+        });
+
+        setPhotoUrls((prev) => [...prev, uploadedUrl]);
+        trackEvent("onboarding_photo_captured");
+      } catch {
+        // Still advance
+      } finally {
+        setUploading(false);
+        setStep(nextStep);
+      }
+    },
+    [photoUrls.length]
+  );
+
+  // ── Character sheet background generation ──
+
+  const startCharacterSheetGeneration = useCallback(
+    async (allPhotoUrls: string[]) => {
+      setSheetGenerating(true);
+      try {
+        const res = await fetch("/api/character-sheet", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ photoUrls: allPhotoUrls }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.poses?.compositeUrl) {
+            setPosesSheetUrl(data.poses.compositeUrl);
+            setPosesSheetId(data.poses.id || null);
+          }
+          if (data.threeD?.id) {
+            setThreeDSheetId(data.threeD.id);
+          }
+        }
+      } catch (err) {
+        console.error("[onboarding] Character sheet generation failed:", err);
+      } finally {
+        setSheetGenerating(false);
+      }
+    },
+    []
+  );
+
+  // ── Welcome video generation ──
+
+  const generateWelcomeVideo = useCallback(async () => {
+    setVideoGenerating(true);
+    try {
+      const res = await fetch("/api/onboarding/preview-video", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          posesSheetUrl,
+          threeDSheetId,
+          voiceCloneId,
+        }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.videoId) {
+          setVideoId(data.videoId);
+          pollVideoStatus(data.videoId);
+        }
+      }
+    } catch {
+      // Non-blocking
+    }
+  }, [posesSheetUrl, threeDSheetId, voiceCloneId]);
+
+  const pollVideoStatus = useCallback(async (vid: string) => {
+    const steps = ["expand", "tts", "anchor"];
+    for (const s of steps) {
+      try {
+        await fetch("/api/generate/process", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ videoId: vid, step: s }),
+        });
+      } catch {
+        break;
+      }
+    }
+
+    try {
+      await fetch("/api/generate/process", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ videoId: vid, step: "submit_all_cuts" }),
+      });
+    } catch {
+      return;
+    }
+
+    try {
+      await fetch("/api/generate/process", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ videoId: vid, step: "poll_all_cuts" }),
+      });
+    } catch {
+      return;
+    }
+
+    try {
+      await fetch("/api/generate/process", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ videoId: vid, step: "stitch" }),
+      });
+    } catch {
+      return;
+    }
+
+    try {
+      await fetch("/api/generate/process", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ videoId: vid, step: "poll_stitch" }),
+      });
+    } catch {
+      return;
+    }
+
+    try {
+      const statusRes = await fetch(`/api/generate/status?videoId=${vid}`);
+      if (statusRes.ok) {
+        const statusData = await statusRes.json();
+        if (statusData.videoUrl) {
+          setVideoUrl(statusData.videoUrl);
+        }
+      }
+    } catch {
+      // Non-blocking
+    }
+    setVideoGenerating(false);
+  }, []);
+
+  // ── Step handlers ──
+
+  const handleChooseCamera = useCallback(async () => {
+    const success = await startCameraStream();
+    if (success) {
+      setStep("camera_happy");
+    } else {
+      setStep("upload_more");
+    }
+  }, [startCameraStream]);
+
+  const handleUploadComplete = useCallback(
+    (urls: string[]) => {
+      setPhotoUrls((prev) => [...prev, ...urls]);
+      setStep("upload_more");
+    },
+    []
+  );
+
+  const handleUploadMoreComplete = useCallback(
+    (moreUrls: string[]) => {
+      const allUrls = [...photoUrls, ...moreUrls];
+      setPhotoUrls(allUrls);
+      stopCameraStream();
+      startCharacterSheetGeneration(allUrls);
+      setStep("voice");
+    },
+    [photoUrls, stopCameraStream, startCharacterSheetGeneration]
+  );
+
+  const handleUploadMoreSkip = useCallback(() => {
+    stopCameraStream();
+    startCharacterSheetGeneration(photoUrls);
+    setStep("voice");
+  }, [photoUrls, stopCameraStream, startCharacterSheetGeneration]);
+
+  const handleVoiceCapture = useCallback(
+    async (audioBlob: Blob) => {
+      setVoiceUploading(true);
+      try {
+        const formData = new FormData();
+        formData.append("audio", audioBlob, `voice-${Date.now()}.webm`);
+        const res = await fetch("/api/onboarding/voice", { method: "POST", body: formData });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.voiceId) setVoiceCloneId(data.voiceId);
+          trackEvent("onboarding_voice_cloned");
+        }
+      } catch {
+        // Non-blocking
+      } finally {
+        setVoiceUploading(false);
+        setStep("character_reveal");
+      }
+    },
+    []
+  );
+
+  const handleSkipVoice = useCallback(() => {
+    trackEvent("onboarding_voice_skipped");
+    setStep("character_reveal");
+  }, []);
+
+  const handleSheetSelect = useCallback(
+    (poseUrl: string, sheetId: string) => {
+      trackEvent("onboarding_character_selected");
+      setPosesSheetUrl(poseUrl);
+      setPosesSheetId(sheetId);
+      setStep("paywall");
+      setTimeout(() => generateWelcomeVideo(), 100);
+    },
+    [generateWelcomeVideo]
+  );
+
+  // ── Render ──
+
+  const { heading, sub } = STEP_CONTENT[step];
+  const expressionConfig = EXPRESSIONS.find((e) => e.step === step);
+
+  return (
+    <div className="relative min-h-screen bg-[#060610] flex flex-col overflow-hidden">
+      <AmbientBg />
+
+      {/* Header */}
+      <div className="relative z-10 flex items-center justify-between px-6 py-5">
+        <motion.div
+          initial={{ opacity: 0, x: -8 }}
+          animate={{ opacity: 1, x: 0 }}
+          className="flex items-center gap-2"
+        >
+          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center">
+            <span className="text-[12px]">{"\u2726"}</span>
+          </div>
+          <span className="text-[15px] font-bold text-white tracking-tight">Official AI</span>
+        </motion.div>
+        <motion.div initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }}>
+          <StepBar current={step} />
+        </motion.div>
+      </div>
+
+      {/* Content */}
+      <div className="relative z-10 flex-1 flex flex-col items-center justify-center px-6 pb-16 pt-2">
+        <div className="w-full max-w-sm">
+          {/* Heading */}
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={step + "-h"}
+              initial={{ opacity: 0, y: 16, filter: "blur(4px)" }}
+              animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+              exit={{ opacity: 0, y: -16, filter: "blur(4px)" }}
+              transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
+              className="text-center mb-8"
+            >
+              <h1 className="text-[28px] font-extrabold text-white tracking-tight leading-tight">
+                {heading}
+              </h1>
+              <p className="text-[14px] text-white/40 mt-2 font-medium">{sub}</p>
+            </motion.div>
+          </AnimatePresence>
+
+          {/* Step content */}
+          <AnimatePresence mode="wait">
+            {/* ── Welcome ── */}
+            {step === "welcome" && (
+              <motion.div
+                key="welcome"
+                initial={{ opacity: 0, x: 24 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -24 }}
+                transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+                className="flex flex-col items-center gap-6"
               >
-                Try it free — no signup
-                <ArrowRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
-              </Link>
-              <Link
-                href="/how-it-works"
-                className="inline-flex items-center justify-center gap-2 px-7 py-3.5 min-h-[48px] w-full sm:w-auto rounded-xl text-[15px] text-white/40 hover:text-white/60 active:text-white/70 transition-all"
+                {/* Hero graphic */}
+                <div className="w-24 h-24 rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center shadow-lg shadow-indigo-500/20">
+                  <span className="text-4xl">{"\u2728"}</span>
+                </div>
+
+                <div className="space-y-3 text-center">
+                  <p className="text-[14px] text-white/50 leading-relaxed max-w-[280px] mx-auto">
+                    We&apos;ll snap a few photos, clone your voice, and build an AI twin that creates content for you — on autopilot.
+                  </p>
+                  <div className="flex items-center justify-center gap-4 text-[12px] text-white/30 pt-1">
+                    <span className="flex items-center gap-1"><span>📸</span> 4 selfies</span>
+                    <span className="flex items-center gap-1"><span>🎙️</span> 30s audio</span>
+                    <span className="flex items-center gap-1"><span>⏱️</span> ~2 min</span>
+                  </div>
+                </div>
+
+                <button
+                  onClick={async () => {
+                    const success = await startCameraStream();
+                    setStep(success ? "camera_happy" : "upload_more");
+                  }}
+                  className="w-full py-3.5 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-600 text-white text-[15px] font-bold tracking-tight shadow-lg shadow-indigo-500/25 hover:shadow-indigo-500/40 hover:brightness-110 active:scale-[0.98] transition-all"
+                >
+                  Let&apos;s go
+                </button>
+              </motion.div>
+            )}
+
+            {/* ── Photo Choice ── */}
+            {step === "photo_choice" && (
+              <motion.div
+                key="photo_choice"
+                initial={{ opacity: 0, x: 24 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -24 }}
+                transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
               >
-                See how it works
-              </Link>
-            </div>
+                <PhotoChoice
+                  onChooseCamera={handleChooseCamera}
+                  onUploadComplete={handleUploadComplete}
+                />
+              </motion.div>
+            )}
 
-            <p className="text-[13px] text-white/15">
-              No credit card required
-            </p>
-          </FadeIn>
-        </div>
-      </section>
-
-      {/* Hero Demo Video — Item 1 */}
-      <FadeIn delay={0.15} duration={0.8}>
-        <section className="pb-24 px-6">
-          <div className="max-w-sm mx-auto">
-            {/* 9:16 video container with glow */}
-            <div className="relative group">
-              {/* Outer glow */}
-              <div className="absolute -inset-4 bg-gradient-to-b from-blue-500/[0.08] via-violet-500/[0.06] to-transparent rounded-[32px] blur-2xl opacity-60 group-hover:opacity-100 transition-opacity duration-700 pointer-events-none" />
-
-              {/* Video frame */}
-              <div className="relative aspect-[9/16] rounded-2xl overflow-hidden border border-white/[0.08] bg-gradient-to-b from-white/[0.03] to-white/[0.01]">
-                {/* Simulated content / poster background */}
-                <div className="absolute inset-0 bg-gradient-to-b from-blue-900/20 via-[#0a0e17] to-violet-900/20" />
-
-                {/* Subtle mesh grid overlay */}
-                <div
-                  className="absolute inset-0 opacity-[0.04]"
-                  style={{
-                    backgroundImage:
-                      "linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px)",
-                    backgroundSize: "40px 40px",
+            {expressionConfig && (
+              <motion.div
+                key={step}
+                initial={{ opacity: 0, x: 24 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -24 }}
+                transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+              >
+                <ExpressionCapture
+                  expression={{ emoji: expressionConfig.emoji, label: expressionConfig.label }}
+                  cameraStream={cameraStream}
+                  uploading={uploading}
+                  onCapture={(file, url) => {
+                    const idx = EXPRESSIONS.findIndex((e) => e.step === step);
+                    const nextStep: Step =
+                      idx < EXPRESSIONS.length - 1 ? EXPRESSIONS[idx + 1].step : "upload_more";
+                    handleExpressionCapture(file, url, nextStep);
                   }}
                 />
+              </motion.div>
+            )}
 
-                {/* Floating AI generation indicators */}
-                <div className="absolute top-6 left-5 flex items-center gap-2 px-2.5 py-1.5 rounded-full bg-white/[0.06] border border-white/[0.08] backdrop-blur-sm">
-                  <Sparkles className="w-3 h-3 text-blue-400/80" />
-                  <span className="text-[10px] text-white/40 font-medium">
-                    AI Generated
-                  </span>
-                </div>
-
-                <div className="absolute top-6 right-5">
-                  <div className="px-2.5 py-1.5 rounded-full bg-white/[0.06] border border-white/[0.08] backdrop-blur-sm">
-                    <span className="text-[10px] text-white/40 font-medium">
-                      0:30
-                    </span>
-                  </div>
-                </div>
-
-                {/* Center play button and text */}
-                <div className="absolute inset-0 flex flex-col items-center justify-center">
-                  {/* Play button with glow ring */}
-                  <div className="relative mb-6">
-                    <div className="absolute inset-0 bg-white/10 rounded-full blur-xl scale-150 animate-pulse-slow" />
-                    <button
-                      className="relative w-16 h-16 rounded-full bg-white/[0.1] border border-white/[0.15] flex items-center justify-center backdrop-blur-sm hover:bg-white/[0.15] hover:border-white/[0.25] hover:scale-105 transition-all duration-300 cursor-pointer"
-                      aria-label="Play demo video"
-                    >
-                      <Play className="w-6 h-6 text-white/90 ml-1" />
-                    </button>
-                  </div>
-
-                  <p className="text-[14px] sm:text-[15px] text-white/60 font-medium text-center px-8 leading-snug">
-                    Watch AI create a video
-                    <br />
-                    in 30 seconds
-                  </p>
-                </div>
-
-                {/* Bottom gradient fade */}
-                <div className="absolute bottom-0 left-0 right-0 h-24 bg-gradient-to-t from-[#050508] to-transparent" />
-
-                {/* Bottom simulated timeline bar */}
-                <div className="absolute bottom-4 left-5 right-5">
-                  <div className="h-[2px] rounded-full bg-white/[0.06] overflow-hidden">
-                    <div className="h-full w-0 bg-gradient-to-r from-blue-400 to-violet-400 rounded-full" />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Caption below video */}
-            <p className="text-center mt-6 text-[14px] text-white/30 leading-relaxed font-light">
-              This was made by AI. No camera. No crew. No editing.
-            </p>
-          </div>
-        </section>
-      </FadeIn>
-
-      {/* Social Proof Wall — Item 4 */}
-      <FadeIn>
-        <section className="py-20 px-6 border-y border-white/[0.04]">
-          <div className="max-w-4xl mx-auto">
-            {/* Trusted counter */}
-            <div className="text-center mb-12">
-              <div className="inline-flex items-center gap-3 px-5 py-2.5 rounded-full bg-white/[0.03] border border-white/[0.06] mb-6">
-                <div className="flex -space-x-1.5">
-                  {[...Array(5)].map((_, i) => (
-                    <Star
-                      key={i}
-                      className="w-3.5 h-3.5 text-yellow-400/80 fill-yellow-400/80"
-                    />
-                  ))}
-                </div>
-                <span className="text-[13px] text-white/50 font-medium">
-                  4.9 average rating
-                </span>
-              </div>
-              <h2 className="text-[28px] sm:text-[34px] font-bold tracking-tight text-white mb-2">
-                Trusted by{" "}
-                <span className="bg-gradient-to-r from-blue-400 to-violet-400 bg-clip-text text-transparent">
-                  200+
-                </span>{" "}
-                professionals
-              </h2>
-              <p className="text-[15px] text-white/25">
-                Attorneys, doctors, real estate agents, and advisors use Official
-                AI every day.
-              </p>
-            </div>
-
-            {/* Testimonial cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {testimonials.map((t, i) => (
-                <FadeIn key={i} delay={i * 0.1} duration={0.6}>
-                  <div className="relative p-6 rounded-2xl card-hairline h-full flex flex-col">
-                    {/* Accent gradient top */}
-                    <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-blue-500/20 via-violet-500/10 to-transparent" />
-
-                    {/* Quote icon */}
-                    <Quote className="w-5 h-5 text-blue-400/20 mb-4 flex-shrink-0" />
-
-                    {/* Quote text */}
-                    <p className="text-[13px] text-white/40 leading-relaxed mb-6 flex-1">
-                      &ldquo;{t.quote}&rdquo;
-                    </p>
-
-                    {/* Author */}
-                    <div className="flex items-center gap-3 pt-4 border-t border-white/[0.04]">
-                      {/* Avatar placeholder */}
-                      <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500/20 to-violet-500/20 border border-white/[0.06] flex items-center justify-center flex-shrink-0">
-                        <span className="text-[11px] font-semibold text-white/50">
-                          {t.name
-                            .split(" ")
-                            .map((n) => n[0])
-                            .join("")}
-                        </span>
-                      </div>
-                      <div>
-                        <div className="text-[13px] font-medium text-white/70">
-                          {t.name}
-                        </div>
-                        <div className="text-[11px] text-white/25">
-                          {t.title} &middot; {t.industry}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </FadeIn>
-              ))}
-            </div>
-          </div>
-        </section>
-      </FadeIn>
-
-      {/* Stats */}
-      <FadeIn>
-        <section className="border-b border-white/[0.04] py-12 px-6">
-          <div className="max-w-4xl mx-auto grid grid-cols-2 md:grid-cols-4 gap-6 text-center">
-            {[
-              { value: "90%", label: "Less time creating" },
-              { value: "60x", label: "More views on average" },
-              { value: "5 min", label: "Setup to first video" },
-              { value: "$79", label: "Per month to start" },
-            ].map((stat, i) => (
-              <div key={i} className="space-y-1">
-                <div className="text-[32px] font-bold tracking-tight text-white">
-                  {stat.value}
-                </div>
-                <div className="text-[13px] text-white/25">{stat.label}</div>
-              </div>
-            ))}
-          </div>
-        </section>
-      </FadeIn>
-
-      {/* How it Works */}
-      <FadeIn>
-        <section id="how" className="py-28 px-6 scroll-mt-20">
-          <div className="max-w-4xl mx-auto">
-            <div className="mb-14">
-              <p className="text-[13px] font-medium text-blue-400/70 uppercase tracking-widest mb-3">
-                How it works
-              </p>
-              <h2 className="text-[36px] sm:text-[40px] font-bold tracking-tight text-white leading-tight">
-                Three steps. Five minutes.
-                <br />
-                <span className="text-white/40">Content on autopilot.</span>
-              </h2>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-              {[
-                {
-                  icon: Camera,
-                  num: "01",
-                  title: "Upload your photos",
-                  desc: "A few selfies or headshots from your phone. The AI builds a consistent character model of you for every video.",
-                  accent: "from-blue-500/20 to-blue-500/0",
-                },
-                {
-                  icon: Sparkles,
-                  num: "02",
-                  title: "AI creates your content",
-                  desc: "Type what you want or let AI decide. It writes the script, plans the shots, and builds a multi-cut video that looks professionally produced.",
-                  accent: "from-violet-500/20 to-violet-500/0",
-                },
-                {
-                  icon: Send,
-                  num: "03",
-                  title: "Review and publish",
-                  desc: "Every video hits your approval queue first. Approve it, schedule it, and it auto-posts to Instagram, TikTok, LinkedIn, YouTube, and Facebook.",
-                  accent: "from-emerald-500/20 to-emerald-500/0",
-                },
-              ].map((step) => (
-                <div
-                  key={step.num}
-                  className="group relative p-6 rounded-2xl card-hairline"
-                >
-                  <div
-                    className={`absolute top-0 left-0 right-0 h-px bg-gradient-to-r ${step.accent}`}
-                  />
-                  <div className="w-10 h-10 rounded-xl bg-white/[0.04] border border-white/[0.06] flex items-center justify-center mb-5 group-hover:border-white/[0.1] transition-colors">
-                    <step.icon className="w-4.5 h-4.5 text-white/40" />
-                  </div>
-                  <div className="text-[11px] text-white/15 font-mono mb-2">
-                    {step.num}
-                  </div>
-                  <h3 className="text-[16px] font-semibold text-white/90 mb-2.5">
-                    {step.title}
-                  </h3>
-                  <p className="text-[13px] text-white/30 leading-relaxed">
-                    {step.desc}
-                  </p>
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-8 text-center">
-              <Link
-                href="/how-it-works"
-                className="text-[13px] text-blue-400/70 hover:text-blue-400 transition-colors"
+            {step === "upload_more" && (
+              <motion.div
+                key="upload_more"
+                initial={{ opacity: 0, x: 24 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -24 }}
+                transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
               >
-                Learn more about our process &rarr;
-              </Link>
-            </div>
-          </div>
-        </section>
-      </FadeIn>
+                <PhotoUpload
+                  existingCount={photoUrls.length}
+                  onComplete={handleUploadMoreComplete}
+                  onSkip={handleUploadMoreSkip}
+                />
+              </motion.div>
+            )}
 
-      {/* Features */}
-      <FadeIn>
-        <section id="features" className="py-28 px-6 border-t border-white/[0.04] scroll-mt-20">
-          <div className="max-w-4xl mx-auto">
-            <div className="mb-14">
-              <p className="text-[13px] font-medium text-blue-400/70 uppercase tracking-widest mb-3">
-                What you get
-              </p>
-              <h2 className="text-[36px] sm:text-[40px] font-bold tracking-tight text-white leading-tight">
-                A content team
-                <br />
-                <span className="text-white/40">that never sleeps.</span>
-              </h2>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {[
-                {
-                  title: "AI content team",
-                  desc: "A full creative team powered by AI -- writing scripts, generating videos, and building your brand presence daily.",
-                },
-                {
-                  title: "Automated posting",
-                  desc: "Schedule and publish to Instagram, TikTok, LinkedIn, YouTube, and Facebook from one dashboard. Set it and forget it.",
-                },
-                {
-                  title: "Your face, your voice",
-                  desc: "Character sheets and voice cloning ensure every video looks and sounds like you. Not a generic avatar.",
-                },
-                {
-                  title: "Performance insights",
-                  desc: "Track views, engagement, and ROI across all platforms. Know what content drives real results.",
-                },
-                {
-                  title: "Content calendar",
-                  desc: "Plan, preview, and approve your entire week of content in one place. Nothing posts without your sign-off.",
-                },
-                {
-                  title: "Multi-platform optimization",
-                  desc: "Every video is automatically optimized for each platform -- aspect ratios, captions, and posting times.",
-                },
-              ].map((feature, i) => (
-                <div
-                  key={i}
-                  className="p-5 rounded-xl card-hairline"
-                >
-                  <h3 className="text-[15px] font-medium text-white/80 mb-1.5">
-                    {feature.title}
-                  </h3>
-                  <p className="text-[13px] text-white/25 leading-relaxed">
-                    {feature.desc}
-                  </p>
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-8 text-center">
-              <Link
-                href="/features"
-                className="text-[13px] text-blue-400/70 hover:text-blue-400 transition-colors"
+            {step === "voice" && (
+              <motion.div
+                key="voice"
+                initial={{ opacity: 0, x: 24 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -24 }}
+                transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+                className="space-y-3"
               >
-                See all features &rarr;
-              </Link>
-            </div>
-          </div>
-        </section>
-      </FadeIn>
-
-      {/* Industries */}
-      <FadeIn>
-        <section className="py-28 px-6 border-t border-white/[0.04]">
-          <div className="max-w-4xl mx-auto">
-            <div className="mb-14">
-              <p className="text-[13px] font-medium text-blue-400/70 uppercase tracking-widest mb-3">
-                Built for
-              </p>
-              <h2 className="text-[36px] sm:text-[40px] font-bold tracking-tight text-white leading-tight">
-                Professionals who need
-                <br />
-                <span className="text-white/40">to be everywhere.</span>
-              </h2>
-            </div>
-
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              {[
-                {
-                  title: "Legal",
-                  desc: "Know-your-rights, case results, legal tips",
-                },
-                {
-                  title: "Medical",
-                  desc: "Health tips, procedure explainers, wellness",
-                },
-                {
-                  title: "Real Estate",
-                  desc: "Listing tours, market updates, testimonials",
-                },
-                {
-                  title: "Creators",
-                  desc: "Brand intros, thought leadership, daily tips",
-                },
-              ].map((ind, i) => (
-                <div
-                  key={i}
-                  className="p-5 rounded-xl card-hairline"
+                <VoiceCapture onCapture={handleVoiceCapture} uploading={voiceUploading} />
+                <button
+                  onClick={handleSkipVoice}
+                  className="w-full py-2 text-[12px] text-white/15 hover:text-white/30 transition-colors"
                 >
-                  <h3 className="text-[15px] font-medium text-white/80 mb-1.5">
-                    {ind.title}
-                  </h3>
-                  <p className="text-[12px] text-white/20 leading-relaxed">
-                    {ind.desc}
-                  </p>
-                </div>
-              ))}
-            </div>
+                  Skip for now — we&apos;ll use a stock voice
+                </button>
+              </motion.div>
+            )}
 
-            <div className="mt-8 text-center">
-              <Link
-                href="/use-cases"
-                className="text-[13px] text-blue-400/70 hover:text-blue-400 transition-colors"
+            {step === "character_reveal" && (
+              <motion.div
+                key="character_reveal"
+                initial={{ opacity: 0, x: 24 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -24 }}
+                transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
               >
-                Explore all use cases &rarr;
-              </Link>
-            </div>
-          </div>
-        </section>
-      </FadeIn>
+                <CharacterSheetReveal
+                  photoUrl={photoUrls[0] || ""}
+                  industry="business"
+                  onSelect={handleSheetSelect}
+                  preloadedCompositeUrl={posesSheetUrl}
+                  preloadedSheetId={posesSheetId}
+                  isGenerating={sheetGenerating}
+                />
+              </motion.div>
+            )}
 
-      {/* Pricing — Item 36: One plan, everything included */}
-      <FadeIn>
-        <section id="pricing" className="py-28 px-6 border-t border-white/[0.04] scroll-mt-20">
-          <div className="max-w-4xl mx-auto">
-            <div className="text-center mb-14">
-              <p className="text-[13px] font-medium text-blue-400/70 uppercase tracking-widest mb-3">
-                Pricing
-              </p>
-              <h2 className="text-[36px] sm:text-[40px] font-bold tracking-tight text-white mb-3">
-                One plan. Everything included.
-              </h2>
-              <p className="text-[15px] text-white/25">
-                Start free. Upgrade when you are ready.
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-5 max-w-2xl mx-auto">
-              {/* Main plan */}
-              <div className="relative p-7 rounded-2xl !border-white/[0.1] !bg-white/[0.025] card-hairline">
-                <div className="absolute -top-3 left-6">
-                  <span className="text-[11px] font-semibold text-blue-400 bg-blue-500/10 border border-blue-500/20 px-3 py-1 rounded-full">
-                    Everything included
-                  </span>
-                </div>
-                <h3 className="text-[15px] font-semibold text-white/90 mt-1">
-                  Official AI
-                </h3>
-                <div className="flex items-baseline gap-1 mt-3 mb-6">
-                  <span className="text-[36px] font-bold text-white">$79</span>
-                  <span className="text-[13px] text-white/20">/mo</span>
-                </div>
-                <ul className="space-y-3 mb-6">
-                  {[
-                    "30 videos per month",
-                    "All platforms",
-                    "Voice cloning",
-                    "Multi-cut composition",
-                    "Analytics & auto-posting",
-                  ].map((f, j) => (
-                    <li
-                      key={j}
-                      className="flex items-center gap-2.5 text-[13px] text-white/40"
-                    >
-                      <Check className="w-3.5 h-3.5 text-emerald-400/40 flex-shrink-0" />
-                      {f}
-                    </li>
-                  ))}
-                </ul>
-                <Link
-                  href="/auth/signup"
-                  className="block text-center text-[13px] font-medium py-3 min-h-[44px] flex items-center justify-center rounded-lg transition-all btn-cta-glow bg-white text-[#050508] hover:bg-white/90 active:bg-white/80"
-                >
-                  Start your free week — $79/mo after
-                </Link>
-              </div>
-
-              {/* Enterprise */}
-              <div className="relative p-7 rounded-2xl card-hairline">
-                <h3 className="text-[15px] font-semibold text-white/90 mt-1">
-                  Enterprise
-                </h3>
-                <div className="flex items-baseline gap-1 mt-3 mb-6">
-                  <span className="text-[36px] font-bold text-white">Custom</span>
-                </div>
-                <ul className="space-y-3 mb-6">
-                  {[
-                    "Unlimited videos",
-                    "Dedicated support",
-                    "Custom AI models",
-                    "API access",
-                    "Multi-user accounts",
-                  ].map((f, j) => (
-                    <li
-                      key={j}
-                      className="flex items-center gap-2.5 text-[13px] text-white/40"
-                    >
-                      <Check className="w-3.5 h-3.5 text-white/20 flex-shrink-0" />
-                      {f}
-                    </li>
-                  ))}
-                </ul>
-                <Link
-                  href="mailto:hello@officialai.com?subject=Enterprise%20Inquiry"
-                  className="block text-center text-[13px] font-medium py-3 min-h-[44px] flex items-center justify-center rounded-lg transition-all border border-white/[0.08] text-white/50 hover:text-white/70 hover:border-white/[0.12] active:bg-white/[0.04]"
-                >
-                  Contact sales
-                </Link>
-              </div>
-            </div>
-
-            <div className="mt-8 text-center">
-              <Link
-                href="/pricing"
-                className="text-[13px] text-blue-400/70 hover:text-blue-400 transition-colors"
+            {step === "paywall" && (
+              <motion.div
+                key="paywall"
+                initial={{ opacity: 0, x: 24 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: -24 }}
+                transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
               >
-                See full pricing details &rarr;
-              </Link>
-            </div>
-          </div>
-        </section>
-      </FadeIn>
+                <PaywallStep videoUrl={videoUrl ?? undefined} videoGenerating={videoGenerating} />
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      </div>
+    </div>
+  );
+}
 
-      {/* CTA */}
-      <FadeIn>
-        <section className="py-28 px-6 border-t border-white/[0.04]">
-          <div className="relative max-w-2xl mx-auto text-center">
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[300px] pointer-events-none">
-              <div className="absolute inset-0 bg-blue-500/[0.03] rounded-full blur-[80px]" />
-            </div>
-
-            <div className="relative">
-              <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/[0.04] border border-white/[0.06] mb-8">
-                <Zap className="w-3 h-3 text-yellow-400/70" />
-                <span className="text-[12px] text-white/40 font-medium">
-                  Get your first video in 5 minutes
-                </span>
-              </div>
-
-              <h2 className="text-[36px] sm:text-[42px] font-bold tracking-tight text-white mb-4">
-                Ready to stop filming?
-              </h2>
-              <p className="text-[16px] text-white/30 mb-8 max-w-md mx-auto">
-                Upload your photos and let AI handle the rest. Your social
-                presence, automated.
-              </p>
-              <Link
-                href="/demo"
-                className="btn-cta-glow group inline-flex items-center justify-center gap-2.5 px-8 py-4 min-h-[48px] w-full sm:w-auto rounded-xl bg-white text-[#050508] text-[15px] font-semibold hover:bg-white/90 active:bg-white/80 transition-all"
-              >
-                Try it free — no signup
-                <ArrowRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
-              </Link>
-            </div>
-          </div>
-        </section>
-      </FadeIn>
-    </MarketingLayout>
+export default function HomePage() {
+  return (
+    <SessionProvider>
+      <OnboardingFlow />
+    </SessionProvider>
   );
 }

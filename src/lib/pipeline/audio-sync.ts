@@ -113,7 +113,8 @@ function distributeEvenly(sentences: string[], cutCount: number): string[] {
  * any cuts where per-cut audio is missing.
  */
 export async function generatePerCutAudio(
-  segments: string[]
+  segments: string[],
+  voiceId?: string
 ): Promise<PerCutAudioResult> {
   const results: AudioSegment[] = [];
   const failedCuts: number[] = [];
@@ -129,7 +130,7 @@ export async function generatePerCutAudio(
     }
 
     try {
-      const ttsResult: TTSResult = await generateVoiceover(text);
+      const ttsResult: TTSResult = await generateVoiceover(text, voiceId);
 
       if (ttsResult.audioUrl) {
         results.push({

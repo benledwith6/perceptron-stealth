@@ -159,7 +159,9 @@ export async function cloneVoice(audioUrl: string, name: string): Promise<VoiceC
 
     const formData = new FormData();
     formData.append("name", name);
-    formData.append("files", new Blob([audioBuffer], { type: "audio/mpeg" }), "voice_sample.mp3");
+    const contentType = audioRes.headers.get("content-type") || "audio/mpeg";
+    const ext = contentType.includes("webm") ? "webm" : contentType.includes("wav") ? "wav" : "mp3";
+    formData.append("files", new Blob([audioBuffer], { type: contentType }), `voice_sample.${ext}`);
 
     const response = await fetch("https://api.elevenlabs.io/v1/voices/add", {
       method: "POST",
