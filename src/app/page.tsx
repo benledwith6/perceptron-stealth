@@ -355,70 +355,34 @@ function OnboardingFlow() {
   }, [posesSheetUrl, threeDSheetId, voiceCloneId]);
 
   const pollVideoStatus = useCallback(async (vid: string) => {
-    const steps = ["expand", "tts", "anchor"];
-    for (const s of steps) {
+    const MAX_POLLS = 60; // ~5 minutes at 5s intervals
+    const POLL_INTERVAL = 5000;
+
+    for (let i = 0; i < MAX_POLLS; i++) {
       try {
-        await fetch("/api/generate/process", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ videoId: vid, step: s }),
-        });
+        const res = await fetch(`/api/onboarding/preview-video/status?videoId=${vid}`);
+        if (!res.ok) break;
+
+        const data = await res.json();
+
+        if (data.status === "completed" && data.videoUrl) {
+          setVideoUrl(data.videoUrl);
+          setVideoGenerating(false);
+          return;
+        }
+
+        if (data.status === "failed") {
+          console.error("[poll] Welcome video failed:", data.error);
+          break;
+        }
+
+        // Still processing — wait and poll again
+        await new Promise((r) => setTimeout(r, POLL_INTERVAL));
       } catch {
         break;
       }
     }
 
-    try {
-      await fetch("/api/generate/process", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ videoId: vid, step: "submit_all_cuts" }),
-      });
-    } catch {
-      return;
-    }
-
-    try {
-      await fetch("/api/generate/process", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ videoId: vid, step: "poll_all_cuts" }),
-      });
-    } catch {
-      return;
-    }
-
-    try {
-      await fetch("/api/generate/process", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ videoId: vid, step: "stitch" }),
-      });
-    } catch {
-      return;
-    }
-
-    try {
-      await fetch("/api/generate/process", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ videoId: vid, step: "poll_stitch" }),
-      });
-    } catch {
-      return;
-    }
-
-    try {
-      const statusRes = await fetch(`/api/generate/status?videoId=${vid}`);
-      if (statusRes.ok) {
-        const statusData = await statusRes.json();
-        if (statusData.videoUrl) {
-          setVideoUrl(statusData.videoUrl);
-        }
-      }
-    } catch {
-      // Non-blocking
-    }
     setVideoGenerating(false);
   }, []);
 
