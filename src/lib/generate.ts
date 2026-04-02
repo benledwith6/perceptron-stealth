@@ -55,6 +55,8 @@ export interface GenerateVideoParams {
    *  generates appropriate mouth movements instead of a blank stare.
    *  DATA FLOW GAP #8 FIX */
   audioContext?: string;
+  /** Additional reference image URLs for multi-image models (e.g. Kling v3 elements) */
+  referenceImageUrls?: string[];
 }
 
 export interface GenerateResult {
@@ -123,6 +125,40 @@ const FAL_MODELS: Record<string, FalModelConfig> = {
       duration: clampToKlingDuration(p.duration),
       aspect_ratio: "9:16",
     }),
+  },
+
+  "kling_v3": {
+    falId: "fal-ai/kling-video/v3/pro/image-to-video",
+    name: "Kling 3.0 Pro",
+    description: "Latest Kling — supports multi-image elements for character consistency",
+    maxDuration: 15,
+    supportsImage: true,
+    supportsAudio: false,
+    buildPayload: (p) => {
+      // Kling v3 Pro accepts durations 3-15, no clamping needed
+      const duration = Math.max(3, Math.min(15, p.duration || 5));
+      const payload: Record<string, unknown> = {
+        prompt: p.script,
+        start_image_url: p.photoUrl,
+        duration: String(duration),
+        aspect_ratio: "9:16",
+        generate_audio: false,
+      };
+      // If extra reference images are provided, pass them as an element
+      if (p.referenceImageUrls && p.referenceImageUrls.length > 0) {
+        payload.elements = [
+          {
+            frontal_image_url: p.photoUrl,
+            reference_image_urls: p.referenceImageUrls,
+          },
+        ];
+        // Reference the element in the prompt so the model binds to it
+        if (!p.script.includes("@Element1")) {
+          payload.prompt = `@Element1 ${p.script}`;
+        }
+      }
+      return payload;
+    },
   },
 
   "minimax_video": {
@@ -249,6 +285,8 @@ async function falSubmit(
     : payload;
 
   try {
+    console.log(`[FAL] Full payload for ${modelId}:`, JSON.stringify(submitPayload, null, 2));
+
     // Wrap the FAL submission in retry logic (2 retries with exponential backoff)
     const { result: response } = await withFalRetry(async () => {
       const res = await fetch(`https://queue.fal.run/${modelId}`, {
