@@ -41,8 +41,10 @@ const VIDEO_PROMPT =
   "No ring light. No softbox. Slightly unflattering — this is what makes it real. " +
 
   // Performance
-  "Relaxed, confident. 0.2s natural breath beat before speaking. One blink " +
-  "before the line. Subtle head nod micro-movements during speech. Chest " +
+  "CRITICAL: The video must open with immediate motion from frame 1. " +
+  "No static opening frame. The subject is already mid-motion when the video " +
+  "starts — a slight head movement, a blink, breathing. Never a frozen pose. " +
+  "Relaxed, confident. Subtle head nod micro-movements during speech. Chest " +
   "rise visible once. Tongue tip visible on dental consonants. Natural " +
   "fly-away hairs at temples. Individual strand detail at hairline. " +
 
@@ -54,7 +56,8 @@ const VIDEO_PROMPT =
   // Avoid
   "Avoid: smooth skin, perfect symmetry, glassy eyes, helmet hair, static hair " +
   "during speech, white/uniform teeth, rendered-looking background, neck tone " +
-  "mismatch, frozen micro-expressions between words.";
+  "mismatch, frozen micro-expressions between words, static opening frame, " +
+  "frozen pose at start of video, motionless first frame.";
 
 /**
  * POST /api/onboarding/preview-video

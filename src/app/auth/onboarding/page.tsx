@@ -774,16 +774,31 @@ function OnboardingFlow() {
                 transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
                 className="flex flex-col items-center gap-6"
               >
-                {/* Video player */}
+                {/* Video player — skip first 0.3s to avoid static starting-frame flash */}
                 {videoUrl && (
                   <div className="w-full aspect-[9/16] max-h-[400px] rounded-2xl overflow-hidden bg-black/40 border border-white/10 shadow-2xl shadow-indigo-500/10">
                     <video
                       src={videoUrl}
                       autoPlay
-                      loop
                       playsInline
                       muted={false}
                       className="w-full h-full object-cover"
+                      ref={(el) => {
+                        if (!el) return;
+                        // Skip static starting frame on initial play
+                        const handleLoaded = () => {
+                          if (el.currentTime < 0.1) el.currentTime = 0.3;
+                        };
+                        // On loop: jump past the static opening frame
+                        const handleTimeUpdate = () => {
+                          if (el.currentTime >= el.duration - 0.05) {
+                            el.currentTime = 0.3;
+                            el.play().catch(() => {});
+                          }
+                        };
+                        el.addEventListener("loadeddata", handleLoaded, { once: true });
+                        el.addEventListener("timeupdate", handleTimeUpdate);
+                      }}
                     />
                   </div>
                 )}
