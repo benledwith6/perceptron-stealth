@@ -3,61 +3,54 @@ import { requireAuth } from "@/lib/api-helpers";
 import prisma from "@/lib/prisma";
 import { generateVideo } from "@/lib/generate";
 
-const WELCOME_SCRIPT =
-  "Welcome to AI content — you can now take over the internet.";
+export const WELCOME_SCRIPT =
+  "Welcome to AI content. I'm your AI twin, and starting today, I'm going to help you take over the internet.";
 
-// Kling v3 Pro has a 2500 character prompt limit (~2050 chars below).
+// Kling v3 Pro has a strict 2500-char prompt limit (incl. any @Element prefix).
+// Lip-sync is applied AFTER Kling via fal-ai/sync-lipsync/v2, so we don't
+// need Kling to nail dialogue — just natural speaking motion + UGC realism.
 const VIDEO_PROMPT =
-  "Generate a hyperrealistic UGC-style video that is completely indistinguishable " +
-  "from real smartphone footage shot in 2026. Zero AI aesthetic. Zero stylization. " +
-  "Raw, authentic human video. " +
+  "Hyperrealistic UGC-style smartphone video from 2026. Zero AI aesthetic. " +
+  "Raw authentic human footage. " +
 
-  // Character
-  "Reconstruct the subject's face with exact precision from the three provided " +
-  "references. Lock every feature: pore texture, asymmetry, skin unevenness, " +
-  "lip shape, hairline, jawline. No smoothing. No symmetry correction. Preserve " +
-  "all natural imperfections. Zero face/neck skin tone mismatch. " +
+  // Character — references locked
+  "Reconstruct the subject's face with exact precision from the references. " +
+  "Lock pore texture, asymmetry, skin unevenness, lip shape, hairline, jawline. " +
+  "No smoothing. No symmetry correction. Preserve all natural imperfections. " +
+  "No face/neck skin tone mismatch. " +
 
   // Wardrobe & Setting
-  "Dark charcoal suit with natural fabric drape and slight sitting wrinkles. " +
-  "White dress shirt with a collar crease. Real working office background — " +
-  "laptop, coffee cup, papers. Large window to the left casting natural light. " +
-  "Overhead fluorescent-LED office panels visible. Shallow phone-camera depth " +
-  "of field, background 4-6 feet behind subject. " +
+  "Dark charcoal suit, natural drape, slight sitting wrinkles. White dress " +
+  "shirt with a collar crease. Real working office background: laptop, coffee " +
+  "cup, papers. Large window to the left casting natural light. Overhead " +
+  "fluorescent-LED panels visible. Shallow phone-camera depth of field. " +
 
   // Camera
-  "Simulate iPhone 16 Pro or Samsung S25 Ultra at eye level, propped or " +
-  "selfie-style. 26mm equivalent focal length. Slight barrel distortion at " +
-  "edges. Auto-exposure micro-fluctuation. Autofocus breathing in first " +
-  "0.5 seconds as face-tracking locks. Real compression artifacts in background " +
-  "gradients. Subtle chroma noise in shadows. 9:16 vertical. 1-2 degree " +
-  "frame tilt. 30fps. No film grain — phones suppress it. Luminance noise " +
-  "in shadows only. " +
+  "iPhone 16 Pro / Galaxy S25 Ultra at eye level, selfie-style. 26mm focal " +
+  "length. Slight barrel distortion at edges. Auto-exposure micro-fluctuation. " +
+  "Autofocus breathing in first 0.5s as face-tracking locks. Compression " +
+  "artifacts in background gradients. Subtle chroma noise in shadows. 9:16 " +
+  "vertical. 1-2 degree frame tilt. 30fps. Luminance noise in shadows only. " +
 
   // Lighting
-  "Mixed: cool overhead office LEDs + warm natural window light from left. " +
-  "Phone AWB creates a neutral-warm cast. Shadows present under chin and " +
-  "jawline — unfilled. Single catch light in each eye from window. " +
-  "No ring light. No softbox. Slightly unflattering — this is what makes it real. " +
+  "Mixed cool overhead LEDs + warm window light from left. Phone AWB gives " +
+  "neutral-warm cast. Unfilled shadows under chin and jawline. Single catch " +
+  "light per eye from window. No ring light, no softbox. Slightly unflattering. " +
 
-  // Performance
-  "CRITICAL: The video must open with immediate motion from frame 1. " +
-  "No static opening frame. The subject is already mid-motion when the video " +
-  "starts — a slight head movement, a blink, breathing. Never a frozen pose. " +
-  "Relaxed, confident. Subtle head nod micro-movements during speech. Chest " +
-  "rise visible once. Tongue tip visible on dental consonants. Natural " +
-  "fly-away hairs at temples. Individual strand detail at hairline. " +
+  // Performance (no frozen opening — critical)
+  "Open with immediate motion from frame 1 — blink, head tilt, or breath. " +
+  "Never a frozen pose. Subject is already mid-motion when the video starts. " +
+  "Relaxed, confident energy. Subtle head movement throughout. Chest rise " +
+  "visible once. Mouth is actively speaking — natural conversational motion. " +
+  "Fly-away hairs at temples. Individual strand detail at hairline. " +
 
-  // Dialogue
-  `Subject says directly to camera: '${WELCOME_SCRIPT}'. ` +
-  "Conversational tone. Confident energy lift on 'take over the internet.' " +
-  "Sounds like a belief, not a script. Perfect lip sync. " +
+  // Dialogue (final audio & lip sync replaced in post-processing)
+  "Subject speaks directly to camera with warm, confident conversational energy. " +
 
   // Avoid
-  "Avoid: smooth skin, perfect symmetry, glassy eyes, helmet hair, static hair " +
-  "during speech, white/uniform teeth, rendered-looking background, neck tone " +
-  "mismatch, frozen micro-expressions between words, static opening frame, " +
-  "frozen pose at start of video, motionless first frame.";
+  "Avoid: smooth skin, symmetry, glassy eyes, helmet hair, static hair during " +
+  "speech, uniform teeth, rendered backgrounds, neck tone mismatch, frozen " +
+  "first frame, motionless pose.";
 
 /**
  * POST /api/onboarding/preview-video

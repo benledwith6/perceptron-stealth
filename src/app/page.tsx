@@ -283,7 +283,7 @@ function OnboardingFlow() {
   }, []);
 
   const pollVideoStatus = useCallback(async (vid: string) => {
-    const MAX_POLLS = 150; // ~5 minutes at 2s intervals
+    const MAX_POLLS = 300; // ~10 minutes at 2s intervals
     const POLL_INTERVAL = 2000;
 
     for (let i = 0; i < MAX_POLLS; i++) {

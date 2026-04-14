@@ -7,6 +7,9 @@ import {
   videoKey,
   isStorageConfigured,
 } from "@/lib/storage";
+import { generateVoiceover } from "@/lib/voice-engine";
+import { lipSyncVideo } from "@/lib/lipsync";
+import { WELCOME_SCRIPT } from "../route";
 
 /**
  * GET /api/onboarding/preview-video/status?videoId=xxx
@@ -63,27 +66,96 @@ export async function GET(req: NextRequest) {
   const pollResult = await falPollOnce(falJobId);
 
   if (pollResult.status === "completed" && pollResult.videoUrl) {
-    // Persist to Supabase Storage
-    let finalUrl = pollResult.videoUrl;
+    // ── Kling is done. Now layer on the user's cloned voice + lip sync. ──
+    //
+    // Pipeline from here:
+    //   1. Persist silent Kling video to Supabase (fallback if lipsync fails)
+    //   2. Look up user's cloned voiceId
+    //   3. If found: TTS the welcome script with the cloned voice
+    //   4. Run FAL sync-lipsync with silent video + cloned audio
+    //   5. Persist the final synced video to Supabase
+    //   6. Return the synced URL (or silent URL as fallback)
+
+    // Step 1: Persist the silent Kling output
+    let silentUrl = pollResult.videoUrl;
     if (isStorageConfigured()) {
       try {
-        finalUrl = await downloadAndStore(
+        silentUrl = await downloadAndStore(
           pollResult.videoUrl,
-          videoKey(user.id, videoId, "mp4"),
+          videoKey(user.id, `${videoId}-silent`, "mp4"),
           "video/mp4"
         );
       } catch (err) {
-        console.error("[welcome-video/status] Failed to persist video:", err);
+        console.error("[welcome-video/status] Failed to persist silent video:", err);
       }
     }
 
-    // Update video record
+    // Step 2: Look up user's default cloned voice
+    const voiceSample = await prisma.voiceSample.findFirst({
+      where: { userId: user.id, isDefault: true, voiceCloneId: { not: null } },
+      select: { voiceCloneId: true },
+      orderBy: { createdAt: "desc" },
+    });
+
+    let finalUrl = silentUrl;
+    let lipsyncError: string | null = null;
+
+    if (voiceSample?.voiceCloneId) {
+      console.log(
+        `[welcome-video/status] Running TTS + lipsync with voiceId=${voiceSample.voiceCloneId}`
+      );
+
+      // Step 3: Generate cloned-voice audio of the welcome script
+      const tts = await generateVoiceover(WELCOME_SCRIPT, voiceSample.voiceCloneId);
+      if (!tts.audioUrl) {
+        lipsyncError = `TTS failed: ${tts.error}`;
+        console.error(`[welcome-video/status] ${lipsyncError}`);
+      } else {
+        // Step 4: Lip-sync the silent video with the cloned audio
+        const sync = await lipSyncVideo(silentUrl, tts.audioUrl);
+        if (!sync.videoUrl) {
+          lipsyncError = `Lipsync failed: ${sync.error}`;
+          console.error(`[welcome-video/status] ${lipsyncError}`);
+        } else {
+          // Step 5: Persist the synced video to Supabase
+          let syncedUrl = sync.videoUrl;
+          if (isStorageConfigured()) {
+            try {
+              syncedUrl = await downloadAndStore(
+                sync.videoUrl,
+                videoKey(user.id, videoId, "mp4"),
+                "video/mp4"
+              );
+            } catch (err) {
+              console.error(
+                "[welcome-video/status] Failed to persist synced video:",
+                err
+              );
+            }
+          }
+          finalUrl = syncedUrl;
+          console.log(`[welcome-video/status] Lipsync complete: ${finalUrl}`);
+        }
+      }
+    } else {
+      console.log(
+        "[welcome-video/status] No cloned voice found — serving silent video"
+      );
+    }
+
+    // Step 6: Update video record and return the final URL
     await prisma.video.update({
       where: { id: videoId },
       data: {
         status: "complete",
         videoUrl: finalUrl,
         thumbnailUrl: pollResult.thumbnailUrl || null,
+        sourceReview: JSON.stringify({
+          ...(JSON.parse((video.sourceReview as string) || "{}")),
+          silentUrl,
+          lipsynced: finalUrl !== silentUrl,
+          lipsyncError,
+        }),
       },
     });
 

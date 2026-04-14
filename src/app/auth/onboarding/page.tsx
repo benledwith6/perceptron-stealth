@@ -265,12 +265,14 @@ function OnboardingFlow() {
     return () => clearInterval(interval);
   }, [step]);
 
-  // 3-minute timeout fallback during video generation
+  // 10-minute UI warning during video generation
+  // (Kling ~90s + TTS ~5s + sync-lipsync ~80s ≈ 3 min nominal; 10 min
+  // absorbs FAL queue spikes without flashing "taking longer" prematurely)
   useEffect(() => {
     if (step !== "video_generating") return;
     const timeout = setTimeout(() => {
       setVideoTimedOut(true);
-    }, 180_000);
+    }, 600_000);
     return () => clearTimeout(timeout);
   }, [step]);
 
@@ -408,8 +410,8 @@ function OnboardingFlow() {
   const pollVideoStatus = useCallback(async (vid: string) => {
     const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-    // Poll the status endpoint until complete or failed (max ~5 min)
-    for (let attempt = 0; attempt < 60; attempt++) {
+    // Poll the status endpoint until complete or failed (max ~10 min)
+    for (let attempt = 0; attempt < 120; attempt++) {
       await wait(5000);
       try {
         const res = await fetch(`/api/onboarding/preview-video/status?videoId=${vid}`);

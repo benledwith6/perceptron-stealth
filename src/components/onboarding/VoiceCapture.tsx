@@ -10,10 +10,10 @@ interface VoiceCaptureProps {
 }
 
 const SAMPLE_SCRIPTS = [
-  "One of my favorite shows to talk about is Ted Lasso. On the surface, it's a comedy about an American football coach who somehow ends up leading a Premier League soccer team in England.",
-  "The real estate market is shifting fast. If you're thinking about buying or selling, the best time to talk to an expert is before you need one.",
-  "In my years of practice, I've learned that the best outcomes come from preparation. Every case tells a story, and our job is to tell it well.",
-  "Good morning! I help businesses grow by showing them what they can't see. Data tells you the what. Strategy tells you the why. Results tell you it worked.",
+  "One of my favorite shows to talk about is Ted Lasso. On the surface, it's a comedy about an American football coach who somehow ends up leading a Premier League soccer team in England. But under the jokes, it's really a show about kindness, curiosity, and choosing optimism even when you're losing. That's why it stuck with me — it treats being a good person like a superpower, not a weakness.",
+  "The real estate market is shifting fast right now. Interest rates moved three times this year, inventory tightened in the spring, and buyers are more cautious than they've been in a decade. If you're thinking about buying or selling, the best time to talk to an expert is before you need one. I'd rather have an honest fifteen-minute conversation today than watch you overpay next month.",
+  "In my years of practice, I've learned that the best outcomes almost always come from preparation, not performance. Every case tells a story — dates, decisions, the small moments that add up — and our job is to tell it clearly enough that a judge, a jury, or the other side actually understands what happened. If we do that well, settlements get easier and trials get shorter.",
+  "Good morning! I help business owners grow by showing them the numbers they haven't been looking at. Data tells you the what. Strategy tells you the why. And honest results — the kind you can measure six weeks later — tell you whether it actually worked. I don't believe in guessing, I don't believe in vibes, and I definitely don't believe in charging you for either.",
 ];
 
 function formatTime(seconds: number): string {
