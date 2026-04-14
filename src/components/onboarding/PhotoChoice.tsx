@@ -121,10 +121,10 @@ export default function PhotoChoice({ onChooseCamera, onUploadComplete }: PhotoC
                 </div>
               </div>
               <div className="text-left z-10">
-                <p className="text-[15px] font-bold text-white">Take pictures now</p>
+                <p className="text-[15px] font-bold text-white">Take a photo now</p>
                 <p className="text-[12px] text-indigo-300/60 mt-0.5 flex items-center gap-1">
                   <Zap className="w-3 h-3" />
-                  4 quick expressions for best results
+                  Quick selfie — takes 10 seconds
                 </p>
               </div>
               <div className="ml-auto z-10">

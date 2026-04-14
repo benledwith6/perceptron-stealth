@@ -36,39 +36,52 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Failed to upload audio" }, { status: 500 });
     }
 
-    // Step 2: Clone voice via ElevenLabs
-    const cloneName = `${user.firstName || "user"}-onboarding`;
-    const cloneResult = await cloneVoice(audioUrl, cloneName);
-
-    if (cloneResult.error || !cloneResult.voiceId) {
-      console.error("[voice] Clone failed:", cloneResult.error);
-      // Still save the voice sample even if cloning fails — can retry later
-    }
-
-    // Step 3: Unmark existing default voices
+    // Step 2: Unmark existing default voices
     await prisma.voiceSample.updateMany({
       where: { userId: user.id, isDefault: true },
       data: { isDefault: false },
     });
 
-    // Step 4: Create VoiceSample record
+    // Step 3: Create VoiceSample record immediately (without voice clone ID yet)
     const voiceSample = await prisma.voiceSample.create({
       data: {
         userId: user.id,
         filename: audioFile.name || `voice-${fileId}.${ext}`,
         url: audioUrl,
-        duration: 0, // Could compute from audio but not critical
+        duration: 0,
         isDefault: true,
-        voiceCloneId: cloneResult.voiceId || null,
-        provider: cloneResult.provider || null,
+        voiceCloneId: null, // Updated in background once ElevenLabs completes
+        provider: null,
       },
     });
 
+    // Step 4: Clone voice in background — don't block the response
+    const cloneName = `${user.firstName || "user"}-onboarding`;
+    cloneVoice(audioUrl, cloneName)
+      .then(async (cloneResult) => {
+        if (cloneResult.voiceId) {
+          await prisma.voiceSample.update({
+            where: { id: voiceSample.id },
+            data: {
+              voiceCloneId: cloneResult.voiceId,
+              provider: cloneResult.provider || null,
+            },
+          });
+          console.log(`[voice] Clone complete for sample ${voiceSample.id}: ${cloneResult.voiceId}`);
+        } else {
+          console.error("[voice] Clone failed:", cloneResult.error);
+        }
+      })
+      .catch((err) => {
+        console.error("[voice] Background clone error:", err);
+      });
+
+    // Respond immediately — cloning continues in the background
     return NextResponse.json({
       success: true,
-      voiceId: cloneResult.voiceId || null,
+      voiceId: null, // Not available yet; clone is async
       voiceSampleId: voiceSample.id,
-      cloneError: cloneResult.error || null,
+      cloning: true,
     });
   } catch (err: any) {
     console.error("Voice upload failed:", err);

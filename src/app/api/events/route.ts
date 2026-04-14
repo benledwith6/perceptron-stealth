@@ -9,7 +9,7 @@ const VALID_EVENTS = [
   "first_publish",
   "day_7",
   "day_30",
-  // Onboarding funnel
+  // Onboarding funnel (known milestone events — any "onboarding_*" event is also accepted)
   "onboarding_photo_captured",
   "onboarding_character_selected",
   "onboarding_paywall_viewed",
@@ -18,6 +18,12 @@ const VALID_EVENTS = [
 ] as const;
 
 type EventName = (typeof VALID_EVENTS)[number];
+
+function isValidEvent(event: string): boolean {
+  if ((VALID_EVENTS as readonly string[]).includes(event)) return true;
+  // Accept any onboarding funnel event (e.g. onboarding_step_welcome, onboarding_completed).
+  return /^onboarding_[a-z0-9_]+$/.test(event);
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -34,10 +40,12 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    if (!body.event || !VALID_EVENTS.includes(body.event as EventName)) {
+    if (!body.event || !isValidEvent(body.event)) {
       return NextResponse.json(
         {
-          error: `Invalid event. Must be one of: ${VALID_EVENTS.join(", ")}`,
+          error: `Invalid event. Must be one of: ${VALID_EVENTS.join(
+            ", "
+          )} or match "onboarding_*"`,
         },
         { status: 400 }
       );
