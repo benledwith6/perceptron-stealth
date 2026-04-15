@@ -9,6 +9,15 @@ export const WELCOME_SCRIPT =
 // Kling v3 Pro has a strict 2500-char prompt limit (incl. any @Element prefix).
 // Lip-sync is applied AFTER Kling via fal-ai/sync-lipsync/v2, so we don't
 // need Kling to nail dialogue — just natural speaking motion + UGC realism.
+//
+// Design note on the "scene switch" artifact:
+//   Kling's `start_image_url` is painted verbatim as frame 0, then the model
+//   morphs toward whatever the prompt describes. That morph is visible as a
+//   transition from the raw input photo → the styled scene in the first
+//   ~0.5–1s. We SOLVE this at the pipeline level by:
+//     1. Asking Kling for 1 extra second of video (KLING_DURATION_SECONDS)
+//     2. Server-side trimming the first ~1s via ffmpeg in the status route
+//   So the final viewer only ever sees the clean styled talking-head.
 const VIDEO_PROMPT =
   "Hyperrealistic UGC-style smartphone video from 2026. Zero AI aesthetic. " +
   "Raw authentic human footage. " +
@@ -19,38 +28,41 @@ const VIDEO_PROMPT =
   "No smoothing. No symmetry correction. Preserve all natural imperfections. " +
   "No face/neck skin tone mismatch. " +
 
-  // Wardrobe & Setting
+  // Wardrobe & Setting — styled business look, consistent throughout
   "Dark charcoal suit, natural drape, slight sitting wrinkles. White dress " +
   "shirt with a collar crease. Real working office background: laptop, coffee " +
   "cup, papers. Large window to the left casting natural light. Overhead " +
   "fluorescent-LED panels visible. Shallow phone-camera depth of field. " +
 
   // Camera
-  "iPhone 16 Pro / Galaxy S25 Ultra at eye level, selfie-style. 26mm focal " +
-  "length. Slight barrel distortion at edges. Auto-exposure micro-fluctuation. " +
-  "Autofocus breathing in first 0.5s as face-tracking locks. Compression " +
-  "artifacts in background gradients. Subtle chroma noise in shadows. 9:16 " +
-  "vertical. 1-2 degree frame tilt. 30fps. Luminance noise in shadows only. " +
+  "iPhone 16 Pro at eye level, selfie-style. 26mm focal length. Slight barrel " +
+  "distortion at edges. Auto-exposure micro-fluctuation. Compression artifacts " +
+  "in background gradients. 9:16 vertical. 1-2 degree frame tilt. 30fps. " +
 
   // Lighting
   "Mixed cool overhead LEDs + warm window light from left. Phone AWB gives " +
   "neutral-warm cast. Unfilled shadows under chin and jawline. Single catch " +
-  "light per eye from window. No ring light, no softbox. Slightly unflattering. " +
+  "light per eye. No ring light, no softbox. Slightly unflattering. " +
 
-  // Performance (no frozen opening — critical)
-  "Open with immediate motion from frame 1 — blink, head tilt, or breath. " +
-  "Never a frozen pose. Subject is already mid-motion when the video starts. " +
-  "Relaxed, confident energy. Subtle head movement throughout. Chest rise " +
-  "visible once. Mouth is actively speaking — natural conversational motion. " +
-  "Fly-away hairs at temples. Individual strand detail at hairline. " +
+  // Performance — STYLED SCENE STABLE THROUGHOUT (no flicker back to input)
+  "Once the styled scene is established, hold it for the entire clip. " +
+  "Subject stays in the charcoal suit in the office for the full duration — " +
+  "no reverts to casual clothing, no background changes, no location cuts. " +
+  "Subtle head movement, natural blinks, mouth actively speaking. Chest rise " +
+  "visible once. Fly-away hairs at temples. " +
 
   // Dialogue (final audio & lip sync replaced in post-processing)
   "Subject speaks directly to camera with warm, confident conversational energy. " +
 
   // Avoid
-  "Avoid: smooth skin, symmetry, glassy eyes, helmet hair, static hair during " +
-  "speech, uniform teeth, rendered backgrounds, neck tone mismatch, frozen " +
-  "first frame, motionless pose.";
+  "Avoid: scene changes mid-clip, reverts to the input photo's casual look, " +
+  "wardrobe flicker, smooth skin, symmetry, glassy eyes, helmet hair, frozen " +
+  "pose, any cut or transition after the opening second.";
+
+// Kling duration: request 6s so we can trim the first ~1s of scene-morph
+// in the status route, leaving a clean ~5s styled talking head.
+export const KLING_DURATION_SECONDS = 6;
+export const TRIM_START_SECONDS = 1;
 
 /**
  * POST /api/onboarding/preview-video
@@ -110,7 +122,7 @@ export async function POST(req: NextRequest) {
       voiceUrl: "",
       script: VIDEO_PROMPT,
       userId: user.id,
-      duration: 5,
+      duration: KLING_DURATION_SECONDS,
       usePromptEngine: false,
       referenceImageUrls,
     });

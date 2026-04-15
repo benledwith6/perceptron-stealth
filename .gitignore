@@ -42,3 +42,6 @@ prisma/dev.db-journal
 
 # Local Netlify folder
 .netlify
+
+# Local test outputs (video generations, extracted frames — too large for git)
+/test-outputs

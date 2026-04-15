@@ -776,30 +776,40 @@ function OnboardingFlow() {
                 transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
                 className="flex flex-col items-center gap-6"
               >
-                {/* Video player — skip first 0.3s to avoid static starting-frame flash */}
+                {/* Video player — fully buffer + seek-to-0 before reveal so
+                    no intermediate/flash frame is ever painted. */}
                 {videoUrl && (
-                  <div className="w-full aspect-[9/16] max-h-[400px] rounded-2xl overflow-hidden bg-black/40 border border-white/10 shadow-2xl shadow-indigo-500/10">
+                  <div className="w-full aspect-[9/16] max-h-[400px] rounded-2xl overflow-hidden bg-black border border-white/10 shadow-2xl shadow-indigo-500/10">
                     <video
                       src={videoUrl}
-                      autoPlay
                       playsInline
+                      loop
                       muted={false}
-                      className="w-full h-full object-cover"
+                      preload="auto"
+                      className="w-full h-full object-cover opacity-0 transition-opacity duration-300"
                       ref={(el) => {
                         if (!el) return;
-                        // Skip static starting frame on initial play
-                        const handleLoaded = () => {
-                          if (el.currentTime < 0.1) el.currentTime = 0.3;
+                        // Already primed — skip re-binding on re-renders.
+                        if ((el as any).__primed) return;
+                        (el as any).__primed = true;
+
+                        // 1. Wait until enough data is buffered to play without
+                        //    any jumping. 2. Explicitly seek to 0. 3. Wait for
+                        //    `seeked` to confirm frame 0 is ready to paint.
+                        //    4. Then play() + fade in together.
+                        const onReady = () => {
+                          try { el.currentTime = 0; } catch {}
                         };
-                        // On loop: jump past the static opening frame
-                        const handleTimeUpdate = () => {
-                          if (el.currentTime >= el.duration - 0.05) {
-                            el.currentTime = 0.3;
-                            el.play().catch(() => {});
-                          }
+                        const onSeeked = () => {
+                          el.play().catch(() => {});
+                          // Next tick so the first frame is actually on screen
+                          // before the opacity transition starts.
+                          requestAnimationFrame(() => {
+                            el.classList.remove("opacity-0");
+                          });
                         };
-                        el.addEventListener("loadeddata", handleLoaded, { once: true });
-                        el.addEventListener("timeupdate", handleTimeUpdate);
+                        el.addEventListener("canplaythrough", onReady, { once: true });
+                        el.addEventListener("seeked", onSeeked, { once: true });
                       }}
                     />
                   </div>

@@ -9,7 +9,8 @@ import {
 } from "@/lib/storage";
 import { generateVoiceover } from "@/lib/voice-engine";
 import { lipSyncVideo } from "@/lib/lipsync";
-import { WELCOME_SCRIPT } from "../route";
+import { trimVideoStart } from "@/lib/video-utils";
+import { WELCOME_SCRIPT, TRIM_START_SECONDS } from "../route";
 
 /**
  * GET /api/onboarding/preview-video/status?videoId=xxx
@@ -90,57 +91,79 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Step 2: Look up user's default cloned voice
+    // Step 1.5: Trim the first TRIM_START_SECONDS off the silent video to
+    // remove Kling's scene-morph transition (where start_image_url morphs
+    // into the prompted styled scene). After this step, the video is a
+    // clean talking-head in the styled setting from frame 0.
+    let trimmedSilentUrl = silentUrl;
+    let trimError: string | null = null;
+    const trim = await trimVideoStart(
+      silentUrl,
+      TRIM_START_SECONDS,
+      user.id,
+      `${videoId}-trimmed`
+    );
+    if (trim.error) {
+      trimError = trim.error;
+      console.warn(
+        `[welcome-video/status] Trim failed (${trimError}) — using untrimmed silent video`
+      );
+    } else {
+      trimmedSilentUrl = trim.url;
+      console.log(
+        `[welcome-video/status] Trimmed ${TRIM_START_SECONDS}s off silent → ${trimmedSilentUrl}`
+      );
+    }
+
+    // Step 2: Look up user's default cloned voice (may not exist yet —
+    // if not, we still run TTS + lipsync with MiniMax's stock voice so
+    // the onboarding preview never plays silent).
     const voiceSample = await prisma.voiceSample.findFirst({
       where: { userId: user.id, isDefault: true, voiceCloneId: { not: null } },
       select: { voiceCloneId: true },
       orderBy: { createdAt: "desc" },
     });
 
-    let finalUrl = silentUrl;
+    let finalUrl = trimmedSilentUrl;
     let lipsyncError: string | null = null;
+    const voiceIdForTts = voiceSample?.voiceCloneId ?? undefined;
+    console.log(
+      voiceIdForTts
+        ? `[welcome-video/status] Running TTS + lipsync with cloned voiceId=${voiceIdForTts}`
+        : `[welcome-video/status] No cloned voice yet — running TTS + lipsync with stock MiniMax voice`
+    );
 
-    if (voiceSample?.voiceCloneId) {
-      console.log(
-        `[welcome-video/status] Running TTS + lipsync with voiceId=${voiceSample.voiceCloneId}`
-      );
-
-      // Step 3: Generate cloned-voice audio of the welcome script
-      const tts = await generateVoiceover(WELCOME_SCRIPT, voiceSample.voiceCloneId);
-      if (!tts.audioUrl) {
-        lipsyncError = `TTS failed: ${tts.error}`;
+    // Step 3: Generate audio (cloned voice if available, stock otherwise)
+    const tts = await generateVoiceover(WELCOME_SCRIPT, voiceIdForTts);
+    if (!tts.audioUrl) {
+      lipsyncError = `TTS failed: ${tts.error}`;
+      console.error(`[welcome-video/status] ${lipsyncError}`);
+    } else {
+      // Step 4: Lip-sync the TRIMMED silent video with the generated audio
+      const sync = await lipSyncVideo(trimmedSilentUrl, tts.audioUrl);
+      if (!sync.videoUrl) {
+        lipsyncError = `Lipsync failed: ${sync.error}`;
         console.error(`[welcome-video/status] ${lipsyncError}`);
       } else {
-        // Step 4: Lip-sync the silent video with the cloned audio
-        const sync = await lipSyncVideo(silentUrl, tts.audioUrl);
-        if (!sync.videoUrl) {
-          lipsyncError = `Lipsync failed: ${sync.error}`;
-          console.error(`[welcome-video/status] ${lipsyncError}`);
-        } else {
-          // Step 5: Persist the synced video to Supabase
-          let syncedUrl = sync.videoUrl;
-          if (isStorageConfigured()) {
-            try {
-              syncedUrl = await downloadAndStore(
-                sync.videoUrl,
-                videoKey(user.id, videoId, "mp4"),
-                "video/mp4"
-              );
-            } catch (err) {
-              console.error(
-                "[welcome-video/status] Failed to persist synced video:",
-                err
-              );
-            }
+        // Step 5: Persist the synced video to Supabase
+        let syncedUrl = sync.videoUrl;
+        if (isStorageConfigured()) {
+          try {
+            syncedUrl = await downloadAndStore(
+              sync.videoUrl,
+              videoKey(user.id, videoId, "mp4"),
+              "video/mp4"
+            );
+          } catch (err) {
+            console.error(
+              "[welcome-video/status] Failed to persist synced video:",
+              err
+            );
           }
-          finalUrl = syncedUrl;
-          console.log(`[welcome-video/status] Lipsync complete: ${finalUrl}`);
         }
+        finalUrl = syncedUrl;
+        console.log(`[welcome-video/status] Lipsync complete: ${finalUrl}`);
       }
-    } else {
-      console.log(
-        "[welcome-video/status] No cloned voice found — serving silent video"
-      );
     }
 
     // Step 6: Update video record and return the final URL
@@ -153,7 +176,9 @@ export async function GET(req: NextRequest) {
         sourceReview: JSON.stringify({
           ...(JSON.parse((video.sourceReview as string) || "{}")),
           silentUrl,
-          lipsynced: finalUrl !== silentUrl,
+          trimmedSilentUrl,
+          trimError,
+          lipsynced: finalUrl !== trimmedSilentUrl,
           lipsyncError,
         }),
       },

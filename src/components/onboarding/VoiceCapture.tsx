@@ -40,6 +40,7 @@ export default function VoiceCapture({ onCapture, uploading = false }: VoiceCapt
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const animFrameRef = useRef<number | null>(null);
+  const startedAtRef = useRef<number>(0);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -76,9 +77,12 @@ export default function VoiceCapture({ onCapture, uploading = false }: VoiceCapt
       recorder.onstop = () => {
         const blob = new Blob(chunksRef.current, { type: "audio/webm" });
         const url = URL.createObjectURL(blob);
+        // Measure real wall-clock duration instead of the stale `elapsed`
+        // closure — the tick counter in state is only for the UI.
+        const realDuration = Math.round((Date.now() - startedAtRef.current) / 1000);
         setAudioBlob(blob);
         setAudioUrl(url);
-        setDuration(elapsed);
+        setDuration(realDuration);
         setMode("preview");
         stream.getTracks().forEach((t) => t.stop());
         streamRef.current = null;
@@ -86,6 +90,7 @@ export default function VoiceCapture({ onCapture, uploading = false }: VoiceCapt
       };
 
       recorder.start(250);
+      startedAtRef.current = Date.now();
       setMode("recording");
       setElapsed(0);
 
