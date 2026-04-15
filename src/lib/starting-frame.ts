@@ -5,6 +5,23 @@ import { getBackgroundsForIndustry } from "./character-sheet";
 
 const GOOGLE_AI_STUDIO_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 
+// ---------------------------------------------------------------------------
+// Welcome-video scene (shared between starting-frame gen and Kling prompt)
+// ---------------------------------------------------------------------------
+//
+// Pure scene description — no motion, no dialogue. The starting frame bakes
+// this in visually; the Kling prompt re-states it to prevent drift across
+// the 5-second generation.
+export const WELCOME_SCENE =
+  "Dark charcoal suit with natural fabric drape and slight sitting wrinkles. " +
+  "White dress shirt with a collar crease. Real working office background — " +
+  "laptop, coffee cup, papers on the desk. Large window to the left casting " +
+  "natural daylight. Overhead fluorescent-LED office panels visible. Shallow " +
+  "phone-camera depth of field, background 4-6 feet behind subject. Mixed " +
+  "lighting: cool overhead LEDs + warm natural window light from the left. " +
+  "Phone AWB creates a neutral-warm cast. Shadows present under chin and " +
+  "jawline — unfilled. Single catch light in each eye from the window.";
+
 /**
  * Starting Frame Generator
  *
@@ -312,6 +329,227 @@ No morphing, no extra fingers, no uncanny valley. This must look like a real iPh
     };
   } catch (err) {
     console.error("[starting-frame] Unexpected error during generation:", err);
+    return { imageUrl: null, photoId: null, status: "failed" };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Welcome-video starting frame
+// ---------------------------------------------------------------------------
+//
+// Purpose-built starting frame generator for the onboarding welcome video.
+// Goals:
+//   1. Identity — feed the user's raw photos directly so the face matches
+//      (not just character-sheet interpretations).
+//   2. Scene lock — hardcoded charcoal-suit / office / iPhone aesthetic so
+//      the Kling video starts already in-scene (prevents the "two-scene
+//      transition" glitch where Kling dissolves from the selfie's original
+//      background into the prompted office).
+//   3. Likeness model — uses Nano Banana Pro (same model the rest of the
+//      codebase uses for starting frames). Stronger likeness than Gemini
+//      2.5 Flash Image.
+//
+// Inputs sent to Nano Banana Pro:
+//   - Up to 3 raw user photos (primary first)
+//   - Poses character sheet
+//   - 360 character sheet
+//
+// Failure policy: returns { status: "failed" } on any error. Caller treats
+// this as fatal for the whole welcome-video request.
+
+async function fetchAsInlineData(
+  url: string,
+  fallbackMime: string
+): Promise<{ inlineData: { mimeType: string; data: string } } | null> {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) {
+      console.warn(`[welcome-sf] Failed to fetch reference image: ${res.status} ${url}`);
+      return null;
+    }
+    const buffer = await res.arrayBuffer();
+    return {
+      inlineData: {
+        mimeType: res.headers.get("content-type") || fallbackMime,
+        data: Buffer.from(buffer).toString("base64"),
+      },
+    };
+  } catch (err) {
+    console.warn("[welcome-sf] Error fetching reference image:", url, err);
+    return null;
+  }
+}
+
+export async function generateWelcomeStartingFrame(
+  userId: string,
+  refs: { posesSheetUrl: string; threeDSheetUrl: string }
+): Promise<StartingFrameResult> {
+  const apiKey = process.env.GOOGLE_AI_STUDIO_KEY || process.env.GOOGLE_API_KEY;
+  if (!apiKey) {
+    console.error("[welcome-sf] No Google AI key set");
+    return { imageUrl: null, photoId: null, status: "failed" };
+  }
+
+  if (!refs.posesSheetUrl || !refs.threeDSheetUrl) {
+    console.error("[welcome-sf] Missing required character sheet URLs");
+    return { imageUrl: null, photoId: null, status: "failed" };
+  }
+
+  // Pull up to 3 raw user photos, primary first. Exclude any prior
+  // starting-frame photos (those have the sf-- prefix).
+  const photos = await prisma.photo.findMany({
+    where: {
+      userId,
+      NOT: { filename: { startsWith: SF_FILENAME_PREFIX } },
+    },
+    orderBy: [{ isPrimary: "desc" }, { createdAt: "desc" }],
+    take: 3,
+  });
+
+  if (photos.length === 0) {
+    console.error("[welcome-sf] No user photos found for userId:", userId);
+    return { imageUrl: null, photoId: null, status: "failed" };
+  }
+
+  const prompt =
+    "Generate a single high-resolution still photograph of the EXACT same " +
+    "person shown in the provided reference photos and character sheets. " +
+    "Lock every facial feature: pore texture, asymmetry, skin unevenness, " +
+    "lip shape, hairline, jawline, eye color, brow shape. No smoothing. " +
+    "No symmetry correction. No AI sheen. Preserve all natural imperfections. " +
+    "Zero face/neck skin tone mismatch. The raw selfie photos are the " +
+    "ground truth for identity — match them precisely. " +
+    "\n\n" +
+    `SCENE: ${WELCOME_SCENE}\n\n` +
+    "SUBJECT POSE: Facing the camera directly at eye level, chest-up framing, " +
+    "medium close-up. NEUTRAL CLOSED-MOUTH EXPRESSION — lips relaxed and " +
+    "gently closed (not pressed, not smiling, no teeth). Eyes locked on the " +
+    "lens, alert and confident. Natural relaxed shoulders. Subtle breathing " +
+    "posture. The subject is in the micro-moment just before they begin " +
+    "speaking. " +
+    "\n\n" +
+    "CAMERA: Shot on iPhone 16 Pro or Samsung S25 Ultra at eye level, propped " +
+    "or selfie-style. 26mm equivalent focal length. Slight barrel distortion " +
+    "at edges. Real compression artifacts in background gradients. Subtle " +
+    "chroma noise in shadows. 9:16 vertical aspect ratio. 1-2 degree frame " +
+    "tilt — this is a real phone photo, not a tripod shot. " +
+    "\n\n" +
+    "SKIN: Real texture, visible pores, natural imperfections. Natural " +
+    "fly-away hairs at temples. Individual strand detail at the hairline. " +
+    "No airbrushing. " +
+    "\n\n" +
+    "AVOID: smooth skin, perfect symmetry, glassy eyes, helmet hair, wide " +
+    "smile, visible teeth, studio lighting, ring light, softbox, " +
+    "rendered-looking background, neck tone mismatch, closed eyes, looking " +
+    "away from camera, dramatic pose, staged composition, film grain (phones " +
+    "suppress it), generic model-face, airbrushed magazine look. " +
+    "\n\n" +
+    "This frame will anchor a talking-head video — it must look like a real " +
+    "iPhone photo of a real person in a real working office, captured in the " +
+    "half-second before they start speaking.";
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const parts: any[] = [{ text: prompt }];
+  let refCount = 0;
+
+  // 1. Raw user photos first — identity ground truth
+  for (const photo of photos) {
+    if (!photo.url || photo.url.startsWith("/uploads/") || photo.url.startsWith("data:")) continue;
+    const part = await fetchAsInlineData(photo.url, "image/jpeg");
+    if (part) {
+      parts.push(part);
+      refCount++;
+    }
+  }
+
+  // 2. Character sheets — multi-angle reinforcement
+  const posesPart = await fetchAsInlineData(refs.posesSheetUrl, "image/png");
+  if (posesPart) {
+    parts.push(posesPart);
+    refCount++;
+  }
+  const threeDPart = await fetchAsInlineData(refs.threeDSheetUrl, "image/png");
+  if (threeDPart) {
+    parts.push(threeDPart);
+    refCount++;
+  }
+
+  if (refCount === 0) {
+    console.error("[welcome-sf] Could not fetch any reference images");
+    return { imageUrl: null, photoId: null, status: "failed" };
+  }
+
+  console.log(`[welcome-sf] Submitting to nano-banana-pro-preview with ${refCount} reference images (${photos.length} raw photos + 2 sheets)`);
+
+  try {
+    const response = await fetch(
+      `${GOOGLE_AI_STUDIO_URL}/nano-banana-pro-preview:generateContent?key=${apiKey}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts }],
+          generationConfig: {
+            responseModalities: ["image", "text"],
+            temperature: 0.6,
+          },
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      const errBody = await response.text();
+      console.error(`[welcome-sf] Nano Banana Pro error (${response.status}):`, errBody.substring(0, 500));
+      return { imageUrl: null, photoId: null, status: "failed" };
+    }
+
+    const data = await response.json();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const imagePart = data.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData);
+
+    if (!imagePart?.inlineData) {
+      console.error("[welcome-sf] Response contained no image data");
+      return { imageUrl: null, photoId: null, status: "failed" };
+    }
+
+    const { mimeType, data: base64Data } = imagePart.inlineData;
+
+    if (!isStorageConfigured()) {
+      console.error("[welcome-sf] Supabase storage not configured — cannot produce a FAL-compatible URL");
+      return { imageUrl: null, photoId: null, status: "failed" };
+    }
+
+    const buffer = Buffer.from(base64Data, "base64");
+    const ext = mimeType.includes("png") ? "png" : "jpg";
+    const ts = Date.now();
+    const storageKey = `starting-frames/${userId}/sf-welcome-${ts}.${ext}`;
+
+    let imageUrl: string;
+    try {
+      imageUrl = await uploadFile(buffer, storageKey, mimeType);
+    } catch (err) {
+      console.error("[welcome-sf] Supabase upload failed:", err);
+      return { imageUrl: null, photoId: null, status: "failed" };
+    }
+
+    const savedPhoto = await prisma.photo.create({
+      data: {
+        userId,
+        filename: `${SF_FILENAME_PREFIX}welcome-${ts}.${ext}`,
+        url: imageUrl,
+        isPrimary: false,
+      },
+    });
+
+    console.log(`[welcome-sf] Generated ${storageKey} (photoId=${savedPhoto.id})`);
+
+    return {
+      imageUrl,
+      photoId: savedPhoto.id,
+      status: "complete",
+    };
+  } catch (err) {
+    console.error("[welcome-sf] Unexpected error during generation:", err);
     return { imageUrl: null, photoId: null, status: "failed" };
   }
 }
