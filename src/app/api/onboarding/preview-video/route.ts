@@ -22,31 +22,29 @@ const WELCOME_SCRIPT =
 // syntax) so the 360 character sheet is used as an identity reference.
 
 const VIDEO_MOTION =
-  "CRITICAL: The video must open with immediate motion from frame 1. " +
-  "No static opening frame. The subject is already mid-motion when the " +
-  "video starts — a slight head movement, a blink, breathing. Never a " +
-  "frozen pose. Maintain the exact scene, framing, wardrobe, and lighting " +
-  "of the starting frame throughout all 5 seconds — do not change the " +
-  "environment, outfit, or camera position. " +
-  "Relaxed, confident energy. Subtle head nod micro-movements during " +
-  "speech. Chest rise visible once. Tongue tip visible on dental " +
-  "consonants. Natural fly-away hairs at temples moving slightly. " +
+  // Motion + scene lock
+  "CRITICAL: Opens with immediate motion in frame 1 — slight head " +
+  "movement, blink, or breath. Never a frozen pose. Maintain the exact " +
+  "scene, framing, wardrobe, and lighting of the starting frame across " +
+  "all 5 seconds — no scene, outfit, or camera changes. Relaxed, " +
+  "confident energy. Subtle head nod during speech. One visible chest rise. " +
   // Dialogue
-  `Subject says directly to camera: '${WELCOME_SCRIPT}'. ` +
-  "Conversational tone. Confident energy lift on 'take over the internet.' " +
-  "Sounds like a belief, not a script. Perfect lip sync. " +
+  `Subject speaks directly to camera: '${WELCOME_SCRIPT}' ` +
+  "Conversational, with a confident lift on 'take over the internet.' " +
+  "Natural mouth movement — sounds like a belief, not a script. " +
   // Identity lock
-  "Reconstruct the subject's face with exact precision from the provided " +
-  "360 reference sheet. Lock every feature: pore texture, asymmetry, skin " +
-  "unevenness, lip shape, hairline, jawline. No smoothing. No symmetry " +
-  "correction. Preserve all natural imperfections. Zero face/neck skin " +
-  "tone mismatch. " +
+  "Face matches the reference smile photo and 360 sheet exactly: pore " +
+  "texture, asymmetry, skin unevenness, lip shape, hairline, jawline. " +
+  "No smoothing, no symmetry correction. Preserve natural imperfections. " +
+  // Teeth
+  "TEETH: Match the dentition in the smile reference — slightly off-white " +
+  "enamel, natural shape variation, realistic spacing. Tooth count and " +
+  "alignment stay constant across every frame. Never morph, shift, " +
+  "multiply, or change shape. Not veneer-perfect, not AI-generic. " +
   // Avoid
-  "Avoid: smooth skin, perfect symmetry, glassy eyes, helmet hair, static " +
-  "hair during speech, white/uniform teeth, rendered-looking background, " +
-  "neck tone mismatch, frozen micro-expressions between words, static " +
-  "opening frame, frozen pose at start of video, motionless first frame, " +
-  "scene changes, outfit changes, camera moves.";
+  "Avoid: smooth skin, glassy eyes, helmet hair, whitening-strip teeth, " +
+  "morphing teeth, frozen opening frame, scene or outfit changes, " +
+  "camera moves, neck tone mismatch, static hair during speech.";
 
 const VIDEO_PROMPT = `@Element1 ${WELCOME_SCENE} ${VIDEO_MOTION}`;
 
@@ -60,9 +58,11 @@ const VIDEO_PROMPT = `@Element1 ${WELCOME_SCENE} ${VIDEO_MOTION}`;
  *      so Kling has nothing to morph through at t=0 (fixes the "two-scene
  *      transition" glitch where Kling dissolves from the raw selfie's
  *      original background into the prompted office).
- *   2. Submit to Kling v3 Pro image-to-video with exactly two inputs:
- *        - start_image_url = generated starting frame
- *        - reference_image_urls = [360 character sheet]
+ *   2. Submit to Kling v3 Pro image-to-video:
+ *        - start_image_url = generated starting frame (scene + pose lock)
+ *        - reference_image_urls:
+ *            [0] 360 character sheet (multi-angle identity)
+ *            [1] primary smile photo (teeth / dentition anchor, best-effort)
  *
  * On starting-frame failure this endpoint returns 500 — the video will not
  * fall back to the raw primary photo path. The client hits its 3-minute
@@ -75,9 +75,26 @@ export async function POST(req: NextRequest) {
   try {
     console.log("[welcome-video] Starting generation for user:", user.id);
 
-    // Fetch both character sheets. Raw photos are fetched inside
-    // generateWelcomeStartingFrame itself (it pulls the top 3 directly).
-    const [posesSheet, threeSixtySheet] = await Promise.all([
+    // Client is expected to POST the session's photo URLs explicitly.
+    // This scopes the photos used to THIS onboarding run, rather than
+    // pulling stale rows from prior sessions via prisma.findFirst.
+    //
+    // Shape: { photoUrls: string[], voiceCloneId?: string }
+    let sessionPhotoUrls: string[] = [];
+    try {
+      const body = await req.json();
+      if (Array.isArray(body?.photoUrls)) {
+        sessionPhotoUrls = body.photoUrls.filter(
+          (u: unknown): u is string =>
+            typeof u === "string" && u.startsWith("http")
+        );
+      }
+    } catch {
+      // Body parse failure is non-fatal — we'll fall back to a DB query
+      // for the teeth reference below.
+    }
+
+    const [posesSheet, threeSixtySheet, fallbackPrimary] = await Promise.all([
       prisma.characterSheet.findFirst({
         where: { userId: user.id, type: "poses", status: "complete" },
         orderBy: { createdAt: "desc" },
@@ -88,7 +105,25 @@ export async function POST(req: NextRequest) {
         orderBy: { createdAt: "desc" },
         select: { compositeUrl: true },
       }),
+      // Defensive: if the client didn't send photoUrls, we still want a
+      // teeth reference. Pull the most recent primary as a last resort.
+      sessionPhotoUrls.length === 0
+        ? prisma.photo.findFirst({
+            where: {
+              userId: user.id,
+              isPrimary: true,
+              NOT: { filename: { startsWith: "sf--" } },
+            },
+            orderBy: { createdAt: "desc" },
+            select: { url: true },
+          })
+        : Promise.resolve(null),
     ]);
+
+    // The teeth reference photo. Prefer the first photo the client just
+    // uploaded this session; fall back to the DB primary if needed.
+    const teethReferenceUrl =
+      sessionPhotoUrls[0] || fallbackPrimary?.url || null;
 
     if (!posesSheet?.compositeUrl || !threeSixtySheet?.compositeUrl) {
       return NextResponse.json(
@@ -101,13 +136,16 @@ export async function POST(req: NextRequest) {
     }
 
     // ── Stage 1: Generate the starting frame ────────────────────────
-    // Inputs to Nano Banana Pro: top 3 raw user photos + both character
-    // sheets. Output: single still image of the subject in the charcoal
-    // suit / office scene, neutral closed-mouth expression.
-    console.log("[welcome-video] Generating starting frame via Nano Banana Pro...");
+    // Inputs to Nano Banana Pro: session photos (up to first 5) + both
+    // character sheets. If the client didn't send session photos, the
+    // generator falls back to a prisma query for the top 3.
+    console.log(
+      `[welcome-video] Generating starting frame via Nano Banana Pro (session photos: ${sessionPhotoUrls.length})...`
+    );
     const startingFrame = await generateWelcomeStartingFrame(user.id, {
       posesSheetUrl: posesSheet.compositeUrl,
       threeDSheetUrl: threeSixtySheet.compositeUrl,
+      userPhotoUrls: sessionPhotoUrls.length > 0 ? sessionPhotoUrls : undefined,
     });
 
     if (startingFrame.status !== "complete" || !startingFrame.imageUrl) {
@@ -121,12 +159,27 @@ export async function POST(req: NextRequest) {
     console.log("[welcome-video] Starting frame ready:", startingFrame.imageUrl);
 
     // ── Stage 2: Submit to Kling v3 ──────────────────────────────────
-    // Exactly two inputs to FAL: the starting frame (as start_image_url
-    // and the element's frontal_image_url per Kling v3 element spec) and
-    // the 360 character sheet as the sole reference image. The poses
-    // sheet is NOT passed — its information is already distilled into the
-    // starting frame.
-    console.log("[welcome-video] Submitting to FAL (Kling v3)...");
+    // Inputs to FAL:
+    //   - start_image_url / element frontal = starting frame (scene lock)
+    //   - reference_image_urls:
+    //       [0] 360 character sheet (multi-angle identity)
+    //       [1] primary smile photo (teeth / dentition anchor) — best-effort
+    // The poses sheet is NOT passed — its information is distilled into
+    // the starting frame. If no primary photo exists we still submit
+    // with just the 360 sheet rather than failing the whole video.
+    const referenceImageUrls: string[] = [threeSixtySheet.compositeUrl];
+    if (teethReferenceUrl && !teethReferenceUrl.startsWith("data:")) {
+      referenceImageUrls.push(teethReferenceUrl);
+      console.log(
+        `[welcome-video] Using teeth reference (${sessionPhotoUrls.length > 0 ? "session" : "fallback"}): ${teethReferenceUrl.substring(teethReferenceUrl.lastIndexOf("/") + 1)}`
+      );
+    } else {
+      console.warn(
+        "[welcome-video] No teeth reference photo available — teeth may render generically"
+      );
+    }
+
+    console.log(`[welcome-video] Submitting to FAL (Kling v3) with ${referenceImageUrls.length} reference image(s)...`);
     const result = await generateVideo({
       model: "kling_v3",
       photoUrl: startingFrame.imageUrl,
@@ -135,7 +188,7 @@ export async function POST(req: NextRequest) {
       userId: user.id,
       duration: 5,
       usePromptEngine: false,
-      referenceImageUrls: [threeSixtySheet.compositeUrl],
+      referenceImageUrls,
     });
 
     console.log("[welcome-video] FAL job submitted:", result.jobId, result.status);

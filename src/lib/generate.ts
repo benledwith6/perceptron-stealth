@@ -394,7 +394,22 @@ async function falPoll(compositeJobId: string): Promise<PollResult> {
       const videoUrl = result.video?.url || result.output?.url || result.data?.video_url;
       const thumbnailUrl = result.images?.[0]?.url || result.thumbnail?.url || null;
 
-      console.log(`[FAL] Video completed: ${videoUrl ? "has URL" : "no URL"}`);
+      // FAL sometimes reports status=COMPLETED even when the inference
+      // failed (e.g. prompt validation errors). The response body will
+      // contain a `detail` array with the error instead of a video URL.
+      // Catch that here so we report the failure to the caller instead of
+      // silently pretending to be "processing" forever.
+      if (!videoUrl) {
+        const detail = result.detail || result.error || result;
+        const errMsg =
+          typeof detail === "string"
+            ? detail
+            : JSON.stringify(detail).substring(0, 300);
+        console.error(`[FAL] COMPLETED but no video URL. FAL response:`, errMsg);
+        return { status: "failed", error: `FAL error: ${errMsg}` };
+      }
+
+      console.log(`[FAL] Video completed: has URL`);
       return { status: "completed", videoUrl, thumbnailUrl };
     }
 

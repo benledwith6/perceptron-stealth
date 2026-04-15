@@ -63,33 +63,66 @@ export async function GET(req: NextRequest) {
   const pollResult = await falPollOnce(falJobId);
 
   if (pollResult.status === "completed" && pollResult.videoUrl) {
-    // Persist to Supabase Storage
-    let finalUrl = pollResult.videoUrl;
-    if (isStorageConfigured()) {
-      try {
-        finalUrl = await downloadAndStore(
-          pollResult.videoUrl,
-          videoKey(user.id, videoId, "mp4"),
-          "video/mp4"
-        );
-      } catch (err) {
-        console.error("[welcome-video/status] Failed to persist video:", err);
-      }
-    }
+    // SPEED WIN: return the FAL URL to the client immediately (saves the
+    // ~4-9s Supabase download+upload round-trip from user-visible time).
+    // The client can start playing the video right away.
+    //
+    // In the background (via `unstable_after`), we still persist the mp4
+    // to Supabase Storage and update the Video row with the durable URL.
+    // If the user reloads later, they'll play from Supabase — not from
+    // FAL's CDN, which expires.
+    const falVideoUrl = pollResult.videoUrl;
+    const falThumbUrl = pollResult.thumbnailUrl || null;
 
-    // Update video record
+    // Mark the video complete using the FAL URL for now. If the async
+    // re-upload below succeeds, it'll be swapped to the Supabase URL.
     await prisma.video.update({
       where: { id: videoId },
       data: {
         status: "complete",
-        videoUrl: finalUrl,
-        thumbnailUrl: pollResult.thumbnailUrl || null,
+        videoUrl: falVideoUrl,
+        thumbnailUrl: falThumbUrl,
       },
     });
 
+    // Fire-and-forget the Supabase re-upload. In Next's long-lived dev
+    // server (Node runtime) the async work continues until it completes,
+    // well after we return the response to the client.
+    //
+    // PRODUCTION NOTE: on Vercel serverless, the function may be frozen
+    // right after `return`. Migrate to `next/server`'s `unstable_after`
+    // (Next 15) or a proper background queue before shipping to prod.
+    if (isStorageConfigured()) {
+      downloadAndStore(
+        falVideoUrl,
+        videoKey(user.id, videoId, "mp4"),
+        "video/mp4"
+      )
+        .then((supabaseUrl) =>
+          prisma.video
+            .update({
+              where: { id: videoId },
+              data: { videoUrl: supabaseUrl },
+            })
+            .then(() =>
+              console.log(
+                `[welcome-video/status] Background re-upload complete: ${supabaseUrl}`
+              )
+            )
+        )
+        .catch((err) => {
+          // If this fails the Video row keeps the FAL URL. FAL URLs can
+          // expire — log loudly so we notice and can implement a retry.
+          console.error(
+            "[welcome-video/status] Background re-upload FAILED (video still points at FAL CDN):",
+            err
+          );
+        });
+    }
+
     return NextResponse.json({
       status: "completed",
-      videoUrl: finalUrl,
+      videoUrl: falVideoUrl,
     });
   }
 

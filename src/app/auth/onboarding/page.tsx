@@ -5,9 +5,7 @@ import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { Check } from "lucide-react";
 import SessionProvider from "@/components/SessionProvider";
-import PhotoChoice from "@/components/onboarding/PhotoChoice";
-import ExpressionCapture from "@/components/onboarding/ExpressionCapture";
-import PhotoUpload from "@/components/onboarding/PhotoUpload";
+import PhotosUpload from "@/components/onboarding/PhotosUpload";
 import CharacterSheetReveal from "@/components/onboarding/CharacterSheetReveal";
 import VoiceCapture from "@/components/onboarding/VoiceCapture";
 
@@ -15,25 +13,11 @@ import VoiceCapture from "@/components/onboarding/VoiceCapture";
 
 type Step =
   | "welcome"
-  | "photo_choice"
-  | "camera_happy"
-  | "camera_sad"
-  | "camera_angry"
-  | "camera_silly"
-  | "upload_more"
+  | "photos"
   | "voice"
   | "character_reveal"
   | "video_generating"
   | "video_reveal";
-
-// ─── Expression definitions ──────────────────────────────────────
-
-const EXPRESSIONS: { step: Step; emoji: string; label: string }[] = [
-  { step: "camera_happy", emoji: "😊", label: "Smile!" },
-  { step: "camera_sad", emoji: "😢", label: "Frown" },
-  { step: "camera_angry", emoji: "😠", label: "Be angry" },
-  { step: "camera_silly", emoji: "🤪", label: "Be silly" },
-];
 
 // ─── Step bar groups ─────────────────────────────────────────────
 
@@ -47,9 +31,7 @@ const STEP_GROUPS: { key: StepGroup; label: string; emoji: string }[] = [
 ];
 
 function stepToGroup(step: Step): StepGroup {
-  if (step === "welcome") return "photos";
-  if (["photo_choice", "camera_happy", "camera_sad", "camera_angry", "camera_silly", "upload_more"].includes(step))
-    return "photos";
+  if (step === "welcome" || step === "photos") return "photos";
   if (step === "voice") return "voice";
   if (step === "character_reveal") return "twin";
   return "golive";
@@ -61,15 +43,6 @@ function StepBar({ current }: { current: Step }) {
   const currentGroup = stepToGroup(current);
   const groupIdx = STEP_GROUPS.findIndex((g) => g.key === currentGroup);
 
-  // Photo sub-progress: count how many camera steps are done
-  const cameraSteps: Step[] = ["camera_happy", "camera_sad", "camera_angry", "camera_silly"];
-  const cameraDoneCount = cameraSteps.filter((s) => {
-    const sIdx = cameraSteps.indexOf(s);
-    const curIdx = cameraSteps.indexOf(current as any);
-    return curIdx > sIdx;
-  }).length;
-  const inCameraFlow = cameraSteps.includes(current);
-
   return (
     <div className="flex items-center gap-1.5">
       {STEP_GROUPS.map((g, i) => {
@@ -80,15 +53,27 @@ function StepBar({ current }: { current: Step }) {
             {i > 0 && (
               <motion.div
                 className="w-6 h-px"
-                animate={{ backgroundColor: done ? "rgba(99,102,241,0.6)" : "rgba(255,255,255,0.08)" }}
+                animate={{
+                  backgroundColor: done
+                    ? "rgba(99,102,241,0.6)"
+                    : "rgba(255,255,255,0.08)",
+                }}
                 transition={{ duration: 0.5 }}
               />
             )}
             <motion.div
               className="flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-semibold transition-all"
               animate={{
-                backgroundColor: active ? "rgba(99,102,241,0.15)" : done ? "rgba(99,102,241,0.06)" : "transparent",
-                borderColor: active ? "rgba(99,102,241,0.35)" : done ? "rgba(99,102,241,0.2)" : "rgba(255,255,255,0.06)",
+                backgroundColor: active
+                  ? "rgba(99,102,241,0.15)"
+                  : done
+                    ? "rgba(99,102,241,0.06)"
+                    : "transparent",
+                borderColor: active
+                  ? "rgba(99,102,241,0.35)"
+                  : done
+                    ? "rgba(99,102,241,0.2)"
+                    : "rgba(255,255,255,0.06)",
               }}
               style={{ border: "1px solid" }}
             >
@@ -103,11 +88,16 @@ function StepBar({ current }: { current: Step }) {
               ) : (
                 <span>{g.emoji}</span>
               )}
-              <span className={active ? "text-indigo-300" : done ? "text-white/40" : "text-white/15"}>
+              <span
+                className={
+                  active
+                    ? "text-indigo-300"
+                    : done
+                      ? "text-white/40"
+                      : "text-white/15"
+                }
+              >
                 {g.label}
-                {active && g.key === "photos" && inCameraFlow && (
-                  <span className="ml-1 text-indigo-400/60">{cameraDoneCount}/4</span>
-                )}
               </span>
             </motion.div>
           </div>
@@ -124,29 +114,9 @@ const STEP_CONTENT: Record<Step, { heading: string; sub: string }> = {
     heading: "Try out AI Content!",
     sub: "Create your AI twin and start posting in minutes.",
   },
-  photo_choice: {
-    heading: "Let's see that face.",
-    sub: "We need a few expressions to build your AI twin.",
-  },
-  camera_happy: {
-    heading: "Show us happy!",
-    sub: "Big smile, natural energy.",
-  },
-  camera_sad: {
-    heading: "Now look sad.",
-    sub: "A little frown goes a long way.",
-  },
-  camera_angry: {
-    heading: "Give us angry.",
-    sub: "Channel your inner intensity.",
-  },
-  camera_silly: {
-    heading: "Last one — be silly!",
-    sub: "Let loose. Have fun with it.",
-  },
-  upload_more: {
-    heading: "Got more photos?",
-    sub: "More reference = better AI twin.",
+  photos: {
+    heading: "Upload photos of yourself",
+    sub: "The more angles, the better your AI twin. Try to include at least one smile.",
   },
   voice: {
     heading: "Now let's hear you.",
@@ -170,22 +140,34 @@ const STEP_CONTENT: Record<Step, { heading: string; sub: string }> = {
 
 function AmbientBg() {
   return (
-    <div className="fixed inset-0 pointer-events-none overflow-hidden" aria-hidden>
+    <div
+      className="fixed inset-0 pointer-events-none overflow-hidden"
+      aria-hidden
+    >
       <motion.div
         className="absolute top-[-20%] left-[-10%] w-[600px] h-[600px] rounded-full"
-        style={{ background: "radial-gradient(circle, rgba(79,110,247,0.12) 0%, transparent 70%)" }}
+        style={{
+          background:
+            "radial-gradient(circle, rgba(79,110,247,0.12) 0%, transparent 70%)",
+        }}
         animate={{ x: [0, 40, 0], y: [0, 20, 0] }}
         transition={{ duration: 18, repeat: Infinity, ease: "easeInOut" }}
       />
       <motion.div
         className="absolute top-[30%] right-[-15%] w-[500px] h-[500px] rounded-full"
-        style={{ background: "radial-gradient(circle, rgba(139,92,246,0.10) 0%, transparent 70%)" }}
+        style={{
+          background:
+            "radial-gradient(circle, rgba(139,92,246,0.10) 0%, transparent 70%)",
+        }}
         animate={{ x: [0, -30, 0], y: [0, -40, 0] }}
         transition={{ duration: 22, repeat: Infinity, ease: "easeInOut", delay: 3 }}
       />
       <motion.div
         className="absolute bottom-[-10%] left-[30%] w-[400px] h-[400px] rounded-full"
-        style={{ background: "radial-gradient(circle, rgba(6,182,212,0.08) 0%, transparent 70%)" }}
+        style={{
+          background:
+            "radial-gradient(circle, rgba(6,182,212,0.08) 0%, transparent 70%)",
+        }}
         animate={{ x: [0, 20, 0], y: [0, -20, 0] }}
         transition={{ duration: 16, repeat: Infinity, ease: "easeInOut", delay: 6 }}
       />
@@ -203,9 +185,7 @@ function trackEvent(event: string, metadata?: Record<string, unknown>) {
   }).catch(() => {});
 }
 
-// ─── Main flow ───────────────────────────────────────────────────
-
-// ─── Video loading stage messages ───────────────────────────────
+// ─── Video loading stage messages ────────────────────────────────
 
 const VIDEO_LOADING_STAGES = [
   "Generating your starting frame...",
@@ -215,14 +195,15 @@ const VIDEO_LOADING_STAGES = [
   "Almost there...",
 ];
 
+// ─── Main flow ───────────────────────────────────────────────────
+
 function OnboardingFlow() {
   const router = useRouter();
   const [step, setStep] = useState<Step>("welcome");
   const [photoUrls, setPhotoUrls] = useState<string[]>([]);
-  const [uploading, setUploading] = useState(false);
   const [voiceUploading, setVoiceUploading] = useState(false);
 
-  // Character sheet background generation
+  // Character sheet (generated in the background while user is on voice step)
   const [posesSheetUrl, setPosesSheetUrl] = useState<string | null>(null);
   const [posesSheetId, setPosesSheetId] = useState<string | null>(null);
   const [threeDSheetId, setThreeDSheetId] = useState<string | null>(null);
@@ -238,9 +219,11 @@ function OnboardingFlow() {
   const [videoLoadingStage, setVideoLoadingStage] = useState(0);
   const [videoTimedOut, setVideoTimedOut] = useState(false);
 
-  // Shared camera stream across expression screens
-  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
-  const [cameraError, setCameraError] = useState(false);
+  // Guard so we only pre-kickoff video generation once. The useEffect below
+  // fires as soon as character sheets land; without this ref, re-renders
+  // (e.g. strict-mode double-invoke or other state changes) could trigger
+  // duplicate FAL submissions.
+  const videoKickoffRef = useRef(false);
 
   // Track step transitions
   useEffect(() => {
@@ -273,76 +256,6 @@ function OnboardingFlow() {
     }, 180_000);
     return () => clearTimeout(timeout);
   }, [step]);
-
-  // ── Camera management ──
-
-  const startCameraStream = useCallback(async () => {
-    try {
-      const s = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
-      });
-      setCameraStream(s);
-      return true;
-    } catch {
-      setCameraError(true);
-      return false;
-    }
-  }, []);
-
-  const stopCameraStream = useCallback(() => {
-    if (cameraStream) {
-      cameraStream.getTracks().forEach((t) => t.stop());
-      setCameraStream(null);
-    }
-  }, [cameraStream]);
-
-  // Cleanup camera on unmount
-  useEffect(() => {
-    return () => {
-      cameraStream?.getTracks().forEach((t) => t.stop());
-    };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // ── Photo capture handler (shared across expression screens) ──
-
-  const handleExpressionCapture = useCallback(
-    async (file: File, _previewUrl: string, nextStep: Step) => {
-      setUploading(true);
-      try {
-        const formData = new FormData();
-        formData.append("file", file);
-        formData.append("type", "photo");
-
-        let uploadedUrl: string;
-        const res = await fetch("/api/upload", { method: "POST", body: formData });
-        if (res.ok) {
-          uploadedUrl = (await res.json()).url;
-        } else {
-          uploadedUrl = `/uploads/photos/${Date.now()}-${file.name}`;
-        }
-
-        // Create photo record
-        await fetch("/api/photos", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            filename: file.name,
-            url: uploadedUrl,
-            isPrimary: photoUrls.length === 0,
-          }),
-        });
-
-        setPhotoUrls((prev) => [...prev, uploadedUrl]);
-        trackEvent("onboarding_photo_captured");
-      } catch {
-        // Still advance
-      } finally {
-        setUploading(false);
-        setStep(nextStep);
-      }
-    },
-    [photoUrls.length]
-  );
 
   // ── Character sheet background generation ──
 
@@ -379,17 +292,21 @@ function OnboardingFlow() {
   const generateWelcomeVideo = useCallback(async () => {
     setVideoGenerating(true);
     try {
-      // Single POST kicks off TTS + starting frame + FAL submission
+      // Pass the session's photo URLs explicitly so the server uses THIS
+      // onboarding run's photos (for teeth ref + starting-frame inputs)
+      // rather than pulling stale rows from the DB.
       const res = await fetch("/api/onboarding/preview-video", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ voiceCloneId }),
+        body: JSON.stringify({ voiceCloneId, photoUrls }),
       });
-      if (!res.ok) { setVideoGenerating(false); return; }
+      if (!res.ok) {
+        setVideoGenerating(false);
+        return;
+      }
 
       const data = await res.json();
 
-      // If FAL returned synchronously (unlikely but possible)
       if (data.videoUrl) {
         setVideoUrl(data.videoUrl);
         setVideoGenerating(false);
@@ -403,19 +320,19 @@ function OnboardingFlow() {
     } catch {
       setVideoGenerating(false);
     }
-  }, [voiceCloneId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [voiceCloneId, photoUrls]);
 
   const pollVideoStatus = useCallback(async (vid: string) => {
     const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-    // Poll the status endpoint until complete or failed (max ~5 min)
     for (let attempt = 0; attempt < 60; attempt++) {
       await wait(5000);
       try {
-        const res = await fetch(`/api/onboarding/preview-video/status?videoId=${vid}`);
+        const res = await fetch(
+          `/api/onboarding/preview-video/status?videoId=${vid}`
+        );
         if (!res.ok) continue;
         const data = await res.json();
-
         if (data.status === "completed" && data.videoUrl) {
           setVideoUrl(data.videoUrl);
           setVideoGenerating(false);
@@ -425,51 +342,48 @@ function OnboardingFlow() {
           setVideoGenerating(false);
           return;
         }
-        // Still processing — keep polling
       } catch {
-        // Network error — keep trying
+        // network error — keep polling
       }
     }
-    // Timed out
     setVideoGenerating(false);
   }, []);
 
+  // ── SPEED WIN: Pre-kickoff video generation ──
+  //
+  // As soon as both character sheets land AND we have the session photoUrls,
+  // fire the whole /api/onboarding/preview-video pipeline in the background
+  // — no matter which step the user is currently on. The server runs
+  // Nano Banana Pro (~30s) + submits to Kling (~2s) while the user is still
+  // browsing the voice / character_reveal screens.
+  //
+  // By the time they click a pose, the video is already ~30s+ into Kling
+  // generation. Net perceived-time win: ~30 seconds.
+  //
+  // Trade-off: if the user abandons the flow (closes the tab), we've burned
+  // a few cents of Gemini + FAL credits for nothing. Acceptable.
+  useEffect(() => {
+    if (
+      posesSheetUrl &&
+      threeDSheetId &&
+      photoUrls.length > 0 &&
+      !videoKickoffRef.current
+    ) {
+      videoKickoffRef.current = true;
+      generateWelcomeVideo();
+    }
+  }, [posesSheetUrl, threeDSheetId, photoUrls.length, generateWelcomeVideo]);
+
   // ── Step handlers ──
 
-  const handleChooseCamera = useCallback(async () => {
-    const success = await startCameraStream();
-    if (success) {
-      setStep("camera_happy");
-    } else {
-      // Camera denied — fall back to upload path
-      setStep("upload_more");
-    }
-  }, [startCameraStream]);
-
-  const handleUploadComplete = useCallback(
+  const handlePhotosComplete = useCallback(
     (urls: string[]) => {
-      setPhotoUrls((prev) => [...prev, ...urls]);
-      setStep("upload_more");
-    },
-    []
-  );
-
-  const handleUploadMoreComplete = useCallback(
-    (moreUrls: string[]) => {
-      const allUrls = [...photoUrls, ...moreUrls];
-      setPhotoUrls(allUrls);
-      stopCameraStream();
-      startCharacterSheetGeneration(allUrls);
+      setPhotoUrls(urls);
+      startCharacterSheetGeneration(urls);
       setStep("voice");
     },
-    [photoUrls, stopCameraStream, startCharacterSheetGeneration]
+    [startCharacterSheetGeneration]
   );
-
-  const handleUploadMoreSkip = useCallback(() => {
-    stopCameraStream();
-    startCharacterSheetGeneration(photoUrls);
-    setStep("voice");
-  }, [photoUrls, stopCameraStream, startCharacterSheetGeneration]);
 
   const handleVoiceCapture = useCallback(
     async (audioBlob: Blob) => {
@@ -477,14 +391,17 @@ function OnboardingFlow() {
       try {
         const formData = new FormData();
         formData.append("audio", audioBlob, `voice-${Date.now()}.webm`);
-        const res = await fetch("/api/onboarding/voice", { method: "POST", body: formData });
+        const res = await fetch("/api/onboarding/voice", {
+          method: "POST",
+          body: formData,
+        });
         if (res.ok) {
           const data = await res.json();
           if (data.voiceId) setVoiceCloneId(data.voiceId);
           trackEvent("onboarding_voice_cloned");
         }
       } catch {
-        // Non-blocking
+        // non-blocking
       } finally {
         setVoiceUploading(false);
         setStep("character_reveal");
@@ -503,7 +420,7 @@ function OnboardingFlow() {
       await fetch("/api/onboarding/complete", { method: "POST" });
       trackEvent("onboarding_completed");
     } catch {
-      // Non-blocking
+      // non-blocking
     }
     router.push("/dashboard");
   }, [router]);
@@ -514,8 +431,17 @@ function OnboardingFlow() {
       setPosesSheetUrl(poseUrl);
       setPosesSheetId(sheetId);
       setStep("video_generating");
-      // Kick off welcome video generation
-      setTimeout(() => generateWelcomeVideo(), 100);
+      // Note: video generation was already pre-kicked-off by the useEffect
+      // above as soon as character sheets landed. We just advance the step
+      // here — polling is already in progress (or done).
+      //
+      // Safety net: if for some reason the kickoff hasn't fired yet (very
+      // edge case — e.g. sheets landed in the same render as this click),
+      // fire it now.
+      if (!videoKickoffRef.current) {
+        videoKickoffRef.current = true;
+        generateWelcomeVideo();
+      }
     },
     [generateWelcomeVideo]
   );
@@ -523,9 +449,6 @@ function OnboardingFlow() {
   // ── Render ──
 
   const { heading, sub } = STEP_CONTENT[step];
-
-  // Find expression config for camera steps
-  const expressionConfig = EXPRESSIONS.find((e) => e.step === step);
 
   return (
     <div className="relative min-h-screen bg-[#060610] flex flex-col overflow-hidden">
@@ -541,7 +464,9 @@ function OnboardingFlow() {
           <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center">
             <span className="text-[12px]">{"\u2726"}</span>
           </div>
-          <span className="text-[15px] font-bold text-white tracking-tight">Official AI</span>
+          <span className="text-[15px] font-bold text-white tracking-tight">
+            Official AI
+          </span>
         </motion.div>
         <motion.div initial={{ opacity: 0, x: 8 }} animate={{ opacity: 1, x: 0 }}>
           <StepBar current={step} />
@@ -564,7 +489,9 @@ function OnboardingFlow() {
               <h1 className="text-[28px] font-extrabold text-white tracking-tight leading-tight">
                 {heading}
               </h1>
-              <p className="text-[14px] text-white/40 mt-2 font-medium">{sub}</p>
+              <p className="text-[14px] text-white/40 mt-2 font-medium">
+                {sub}
+              </p>
             </motion.div>
           </AnimatePresence>
 
@@ -580,24 +507,30 @@ function OnboardingFlow() {
                 transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
                 className="flex flex-col items-center gap-6"
               >
-                {/* Hero graphic */}
                 <div className="w-24 h-24 rounded-2xl bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center shadow-lg shadow-indigo-500/20">
                   <span className="text-4xl">{"\u2728"}</span>
                 </div>
 
                 <div className="space-y-3 text-center">
                   <p className="text-[14px] text-white/50 leading-relaxed max-w-[280px] mx-auto">
-                    We&apos;ll snap a few photos, clone your voice, and build an AI twin that creates content for you — on autopilot.
+                    We&apos;ll take photos of you, clone your voice, and build an
+                    AI twin that creates content for you — on autopilot.
                   </p>
                   <div className="flex items-center justify-center gap-4 text-[12px] text-white/30 pt-1">
-                    <span className="flex items-center gap-1"><span>📸</span> 4 selfies</span>
-                    <span className="flex items-center gap-1"><span>🎙️</span> 30s audio</span>
-                    <span className="flex items-center gap-1"><span>⏱️</span> ~2 min</span>
+                    <span className="flex items-center gap-1">
+                      <span>📸</span> 3+ photos
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <span>🎙️</span> 30s audio
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <span>⏱️</span> ~2 min
+                    </span>
                   </div>
                 </div>
 
                 <button
-                  onClick={() => setStep("photo_choice")}
+                  onClick={() => setStep("photos")}
                   className="w-full py-3.5 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-600 text-white text-[15px] font-bold tracking-tight shadow-lg shadow-indigo-500/25 hover:shadow-indigo-500/40 hover:brightness-110 active:scale-[0.98] transition-all"
                 >
                   Let&apos;s go
@@ -605,60 +538,16 @@ function OnboardingFlow() {
               </motion.div>
             )}
 
-            {/* ── Photo Choice ── */}
-            {step === "photo_choice" && (
+            {/* ── Photos ── */}
+            {step === "photos" && (
               <motion.div
-                key="photo_choice"
+                key="photos"
                 initial={{ opacity: 0, x: 24 }}
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: -24 }}
                 transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
               >
-                <PhotoChoice
-                  onChooseCamera={handleChooseCamera}
-                  onUploadComplete={handleUploadComplete}
-                />
-              </motion.div>
-            )}
-
-            {/* ── Expression Captures ── */}
-            {expressionConfig && (
-              <motion.div
-                key={step}
-                initial={{ opacity: 0, x: 24 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -24 }}
-                transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-              >
-                <ExpressionCapture
-                  expression={{ emoji: expressionConfig.emoji, label: expressionConfig.label }}
-                  cameraStream={cameraStream}
-                  uploading={uploading}
-                  onCapture={(file, url) => {
-                    // Find next step
-                    const idx = EXPRESSIONS.findIndex((e) => e.step === step);
-                    const nextStep: Step =
-                      idx < EXPRESSIONS.length - 1 ? EXPRESSIONS[idx + 1].step : "upload_more";
-                    handleExpressionCapture(file, url, nextStep);
-                  }}
-                />
-              </motion.div>
-            )}
-
-            {/* ── Upload More ── */}
-            {step === "upload_more" && (
-              <motion.div
-                key="upload_more"
-                initial={{ opacity: 0, x: 24 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -24 }}
-                transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-              >
-                <PhotoUpload
-                  existingCount={photoUrls.length}
-                  onComplete={handleUploadMoreComplete}
-                  onSkip={handleUploadMoreSkip}
-                />
+                <PhotosUpload onComplete={handlePhotosComplete} />
               </motion.div>
             )}
 
@@ -672,7 +561,10 @@ function OnboardingFlow() {
                 transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
                 className="space-y-3"
               >
-                <VoiceCapture onCapture={handleVoiceCapture} uploading={voiceUploading} />
+                <VoiceCapture
+                  onCapture={handleVoiceCapture}
+                  uploading={voiceUploading}
+                />
                 <button
                   onClick={handleSkipVoice}
                   className="w-full py-2 text-[12px] text-white/15 hover:text-white/30 transition-colors"
@@ -712,25 +604,34 @@ function OnboardingFlow() {
                 transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
                 className="flex flex-col items-center gap-8"
               >
-                {/* Pulsing loader */}
                 <div className="relative w-20 h-20">
                   <motion.div
                     className="absolute inset-0 rounded-full bg-indigo-500/20"
-                    animate={{ scale: [1, 1.4, 1], opacity: [0.4, 0, 0.4] }}
-                    transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+                    animate={{
+                      scale: [1, 1.4, 1],
+                      opacity: [0.4, 0, 0.4],
+                    }}
+                    transition={{
+                      duration: 2,
+                      repeat: Infinity,
+                      ease: "easeInOut",
+                    }}
                   />
                   <div className="absolute inset-0 rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center">
                     <motion.span
                       className="text-3xl"
                       animate={{ rotate: [0, 360] }}
-                      transition={{ duration: 3, repeat: Infinity, ease: "linear" }}
+                      transition={{
+                        duration: 3,
+                        repeat: Infinity,
+                        ease: "linear",
+                      }}
                     >
                       {"\uD83C\uDFAC"}
                     </motion.span>
                   </div>
                 </div>
 
-                {/* Cycling status message */}
                 <AnimatePresence mode="wait">
                   <motion.p
                     key={videoLoadingStage}
@@ -744,7 +645,6 @@ function OnboardingFlow() {
                   </motion.p>
                 </AnimatePresence>
 
-                {/* Timeout fallback */}
                 {videoTimedOut && (
                   <motion.div
                     initial={{ opacity: 0 }}
@@ -752,7 +652,8 @@ function OnboardingFlow() {
                     className="flex flex-col items-center gap-3 mt-4"
                   >
                     <p className="text-[12px] text-white/30 text-center">
-                      Taking longer than expected. You can continue and we&apos;ll notify you when it&apos;s ready.
+                      Taking longer than expected. You can continue and
+                      we&apos;ll notify you when it&apos;s ready.
                     </p>
                     <button
                       onClick={handleCompleteOnboarding}
@@ -774,7 +675,6 @@ function OnboardingFlow() {
                 transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
                 className="flex flex-col items-center gap-6"
               >
-                {/* Video player — skip first 0.3s to avoid static starting-frame flash */}
                 {videoUrl && (
                   <div className="w-full aspect-[9/16] max-h-[400px] rounded-2xl overflow-hidden bg-black/40 border border-white/10 shadow-2xl shadow-indigo-500/10">
                     <video
@@ -785,25 +685,24 @@ function OnboardingFlow() {
                       className="w-full h-full object-cover"
                       ref={(el) => {
                         if (!el) return;
-                        // Skip static starting frame on initial play
                         const handleLoaded = () => {
                           if (el.currentTime < 0.1) el.currentTime = 0.3;
                         };
-                        // On loop: jump past the static opening frame
                         const handleTimeUpdate = () => {
                           if (el.currentTime >= el.duration - 0.05) {
                             el.currentTime = 0.3;
                             el.play().catch(() => {});
                           }
                         };
-                        el.addEventListener("loadeddata", handleLoaded, { once: true });
+                        el.addEventListener("loadeddata", handleLoaded, {
+                          once: true,
+                        });
                         el.addEventListener("timeupdate", handleTimeUpdate);
                       }}
                     />
                   </div>
                 )}
 
-                {/* Continue button */}
                 <button
                   onClick={handleCompleteOnboarding}
                   className="w-full py-3.5 rounded-xl bg-gradient-to-r from-indigo-500 to-violet-600 text-white text-[15px] font-bold tracking-tight shadow-lg shadow-indigo-500/25 hover:shadow-indigo-500/40 hover:brightness-110 active:scale-[0.98] transition-all"

@@ -382,7 +382,15 @@ async function fetchAsInlineData(
 
 export async function generateWelcomeStartingFrame(
   userId: string,
-  refs: { posesSheetUrl: string; threeDSheetUrl: string }
+  refs: {
+    posesSheetUrl: string;
+    threeDSheetUrl: string;
+    /** Session photo URLs posted by the client. If present, these are used
+     * as identity references (up to the first 5). If omitted, the function
+     * falls back to a prisma query for the user's top 3 photos — session-
+     * agnostic and may include stale rows from prior runs. */
+    userPhotoUrls?: string[];
+  }
 ): Promise<StartingFrameResult> {
   const apiKey = process.env.GOOGLE_AI_STUDIO_KEY || process.env.GOOGLE_API_KEY;
   if (!apiKey) {
@@ -395,19 +403,34 @@ export async function generateWelcomeStartingFrame(
     return { imageUrl: null, photoId: null, status: "failed" };
   }
 
-  // Pull up to 3 raw user photos, primary first. Exclude any prior
-  // starting-frame photos (those have the sf-- prefix).
-  const photos = await prisma.photo.findMany({
-    where: {
-      userId,
-      NOT: { filename: { startsWith: SF_FILENAME_PREFIX } },
-    },
-    orderBy: [{ isPrimary: "desc" }, { createdAt: "desc" }],
-    take: 3,
-  });
+  // Resolve the list of user-photo URLs to use as identity references.
+  // Session URLs take priority; otherwise fall back to a prisma query.
+  let resolvedUrls: string[];
+  if (refs.userPhotoUrls && refs.userPhotoUrls.length > 0) {
+    resolvedUrls = refs.userPhotoUrls
+      .filter((u) => typeof u === "string" && u.startsWith("http"))
+      .slice(0, 5); // cap at 5 to keep Nano Banana Pro input size reasonable
+    console.log(`[welcome-sf] Using ${resolvedUrls.length} session photo URL(s) from client`);
+  } else {
+    const photos = await prisma.photo.findMany({
+      where: {
+        userId,
+        NOT: { filename: { startsWith: SF_FILENAME_PREFIX } },
+      },
+      orderBy: [{ isPrimary: "desc" }, { createdAt: "desc" }],
+      take: 3,
+    });
+    resolvedUrls = photos
+      .map((p) => p.url)
+      .filter(
+        (u) =>
+          !!u && !u.startsWith("/uploads/") && !u.startsWith("data:")
+      );
+    console.log(`[welcome-sf] Fallback: using ${resolvedUrls.length} photo URL(s) from DB`);
+  }
 
-  if (photos.length === 0) {
-    console.error("[welcome-sf] No user photos found for userId:", userId);
+  if (resolvedUrls.length === 0) {
+    console.error("[welcome-sf] No usable photo URLs for userId:", userId);
     return { imageUrl: null, photoId: null, status: "failed" };
   }
 
@@ -453,9 +476,8 @@ export async function generateWelcomeStartingFrame(
   let refCount = 0;
 
   // 1. Raw user photos first — identity ground truth
-  for (const photo of photos) {
-    if (!photo.url || photo.url.startsWith("/uploads/") || photo.url.startsWith("data:")) continue;
-    const part = await fetchAsInlineData(photo.url, "image/jpeg");
+  for (const photoUrl of resolvedUrls) {
+    const part = await fetchAsInlineData(photoUrl, "image/jpeg");
     if (part) {
       parts.push(part);
       refCount++;
@@ -479,7 +501,7 @@ export async function generateWelcomeStartingFrame(
     return { imageUrl: null, photoId: null, status: "failed" };
   }
 
-  console.log(`[welcome-sf] Submitting to nano-banana-pro-preview with ${refCount} reference images (${photos.length} raw photos + 2 sheets)`);
+  console.log(`[welcome-sf] Submitting to nano-banana-pro-preview with ${refCount} reference images (${resolvedUrls.length} raw photos + 2 sheets)`);
 
   try {
     const response = await fetch(
